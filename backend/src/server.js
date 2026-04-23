@@ -21,6 +21,11 @@ const startServer = async () => {
       nodeEnv: env.nodeEnv,
     });
   });
+  console.log("VisionPark backend listening", {
+    module: "server",
+    port: env.port,
+    nodeEnv: env.nodeEnv,
+  });
 };
 
 startServer().catch((error) => {
