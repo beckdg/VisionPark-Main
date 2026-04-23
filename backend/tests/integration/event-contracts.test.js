@@ -170,11 +170,6 @@ describe("Domain event contracts", () => {
     });
     expect(create.status).toBe(201);
 
-    const apply = await request(app)
-      .post(`/api/operations/enforcements/${create.body._id}/block-spot`)
-      .send({});
-    expect(apply.status).toBe(200);
-
     const events = await waitForEventCount(2);
     const names = events.map((event) => event.name);
     const createIdx = names.indexOf("enforcement.created");

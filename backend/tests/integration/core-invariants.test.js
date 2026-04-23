@@ -210,11 +210,6 @@ describe("Core backend invariants", () => {
     });
     expect(blockCreate.status).toBe(201);
 
-    const blockApply = await request(app)
-      .post(`/api/operations/enforcements/${blockCreate.body._id}/block-spot`)
-      .send({});
-    expect(blockApply.status).toBe(200);
-
     const events = await waitForEventCount(2);
     const enforcementCreated = events.filter(
       (event) => event.name === "enforcement.created"
@@ -234,8 +229,8 @@ describe("Core backend invariants", () => {
     expect(spotRes.body.status).toBe("blocked");
 
     const clear = await request(app)
-      .patch(`/api/operations/enforcements/${blockCreate.body._id}/transition`)
-      .send({ action: "clear" });
+      .post(`/api/operations/enforcements/${blockCreate.body._id}/clear`)
+      .send({});
     expect(clear.status).toBe(200);
 
     const closeRes = await request(app)
@@ -331,5 +326,31 @@ describe("Core backend invariants", () => {
       (event) => event.name === "session.reserved"
     );
     expect(createdEvents).toHaveLength(1);
+  });
+
+  test("8) POST enforcements plate + actionType clamp blocks spot; POST .../clear", async () => {
+    const { spotId } = await createInventory();
+    const clamp = await request(app).post("/api/operations/enforcements").send({
+      spotId,
+      targetType: "plate",
+      plate: "OR 232321",
+      actionType: "clamp",
+    });
+    expect(clamp.status).toBe(201);
+    expect(clamp.body.status).toBe("clamped");
+
+    const spotRes = await request(app).get(`/api/parking/spots/${spotId}`);
+    expect(spotRes.status).toBe(200);
+    expect(spotRes.body.status).toBe("blocked");
+
+    const clearRes = await request(app)
+      .post(`/api/operations/enforcements/${clamp.body._id}/clear`)
+      .send({});
+    expect(clearRes.status).toBe(200);
+    expect(clearRes.body.status).toBe("cleared");
+
+    const after = await request(app).get(`/api/parking/spots/${spotId}`);
+    expect(after.body.status).toBe("free");
+    expect(after.body.isBlocked).toBe(false);
   });
 });

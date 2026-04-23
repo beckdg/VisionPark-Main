@@ -182,13 +182,6 @@ describe("System resilience integration tests", () => {
     });
     expect(enforcementCreate.status).toBe(201);
 
-    const applyBlock = await request(app)
-      .post(`/api/operations/enforcements/${enforcementCreate.body._id}/block-spot`)
-      .send({});
-    expect(applyBlock.status).toBe(200);
-    expect(applyBlock.body.spot.status).toBe("blocked");
-    expect(applyBlock.body.spot.isBlocked).toBe(true);
-
     const sessionStillActive = await request(app).get(`/api/sessions/${sessionId}`);
     expect(sessionStillActive.status).toBe(200);
     expect(sessionStillActive.body.state).toBe("secured");

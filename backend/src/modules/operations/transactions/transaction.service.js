@@ -77,7 +77,7 @@ class TransactionService {
   }
 
   async completeTransaction({ transactionId, status, providerRef = null, metadata = {} }) {
-    if (!["success", "failed", "refunded"].includes(status)) {
+    if (!["pending", "success", "failed", "refunded"].includes(status)) {
       throw new ValidationError("Invalid transaction completion status.");
     }
 
@@ -85,10 +85,28 @@ class TransactionService {
     if (!transaction) throw new NotFoundError("Transaction not found.");
 
     if (["success", "failed", "refunded"].includes(transaction.status)) {
+      if (status === "pending") {
+        throw new ConflictError(`Transaction already finalized as ${transaction.status}.`);
+      }
       if (transaction.status !== status) {
         throw new ConflictError(`Transaction already finalized as ${transaction.status}.`);
       }
       return transaction;
+    }
+
+    if (status === "pending") {
+      const updated = await Transaction.findByIdAndUpdate(
+        transaction._id,
+        {
+          $set: {
+            providerRef: providerRef || transaction.providerRef,
+            metadata: { ...transaction.metadata, ...metadata },
+          },
+          $inc: { __v: 1 },
+        },
+        { new: true }
+      );
+      return updated;
     }
 
     if (status === "success") {

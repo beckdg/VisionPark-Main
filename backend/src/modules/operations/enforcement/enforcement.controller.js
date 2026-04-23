@@ -60,8 +60,18 @@ const getEnforcementById = async (req, res, next) => {
   }
 };
 
+const clearEnforcementPost = async (req, res, next) => {
+  try {
+    const enforcement = await enforcementService.clearEnforcement(req.params.enforcementId);
+    return res.status(200).json(enforcement);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   createEnforcement,
+  clearEnforcementPost,
   transitionEnforcement,
   applySpotBlock,
   removeSpotBlock,

@@ -1,4 +1,5 @@
 const { Enforcement } = require("../models/enforcement.model");
+const { ParkingSession } = require("../../sessions/models/parking-session.model");
 const { ParkingService } = require("../../parking/parking.service");
 const { domainEventBus, DOMAIN_EVENTS } = require("../shared/domain-events");
 const { AppError, ValidationError, NotFoundError, ConflictError } = require("../../../common/errors");
@@ -16,6 +17,7 @@ class EnforcementService {
 
   async createEnforcement(payload) {
     const {
+      actionType,
       targetType,
       plate = null,
       sessionId = null,
@@ -26,6 +28,10 @@ class EnforcementService {
       isWatchlist = false,
       createdById = null,
     } = payload;
+
+    if (actionType != null && actionType !== "" && actionType !== "clamp") {
+      throw new ValidationError("actionType, if provided, must be clamp.");
+    }
 
     if (!["plate", "session"].includes(targetType)) {
       throw new ValidationError("targetType must be plate or session.");
@@ -39,12 +45,30 @@ class EnforcementService {
       );
     }
 
+    let resolvedSpotId = null;
+    if (targetType === "session") {
+      const session = await ParkingSession.findById(sessionId).select("spotId");
+      if (!session) throw new NotFoundError("Session not found.");
+      if (spotId && String(spotId) !== String(session.spotId)) {
+        throw new ValidationError("spotId does not match this session's spot.");
+      }
+      resolvedSpotId = session.spotId;
+    } else if (spotId) {
+      resolvedSpotId = spotId;
+    }
+
+    if (actionType === "clamp" && !resolvedSpotId) {
+      throw new ValidationError(
+        "actionType clamp requires spotId (or session, which resolves the spot automatically).",
+      );
+    }
+
     const enforcement = await Enforcement.create({
       targetType,
       plate,
       sessionId,
       incidentId,
-      spotId,
+      spotId: resolvedSpotId,
       reason,
       debtAmount,
       isWatchlist,
@@ -65,7 +89,20 @@ class EnforcementService {
       eventId: `enforcement-created:${String(enforcement._id)}:${enforcement.__v}`,
     });
 
-    return enforcement;
+    let result = enforcement;
+    if (resolvedSpotId) {
+      const { enforcement: withBlock } = await this.applySpotBlock({
+        enforcementId: enforcement._id,
+        spotId: resolvedSpotId,
+      });
+      result = withBlock;
+    }
+
+    if (actionType === "clamp") {
+      return this.clampEnforcement(result._id);
+    }
+
+    return result;
   }
 
   async flagEnforcement(enforcementId) {
