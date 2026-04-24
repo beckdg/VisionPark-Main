@@ -10,6 +10,7 @@ const { parkingRoutes } = require("../modules/parking");
 const { operationsRoutes } = require("../modules/operations");
 const { aiRoutes } = require("../modules/ai-ingestion");
 const { userRoutes } = require("../modules/users");
+const { authRoutes } = require("../modules/auth");
 const { ParkingSession } = require("../modules/sessions/models/parking-session.model");
 const { ParkingSpot } = require("../modules/parking/models/parking-spot.model");
 const { Incident } = require("../modules/operations/models/incident.model");
@@ -113,6 +114,7 @@ const createApp = () => {
   });
 
   // Module mounting
+  app.use("/api/auth", authRoutes);
   app.use("/api/sessions", sessionRoutes);
   app.use("/api/parking", parkingRoutes);
   app.use("/api/operations", operationsRoutes);

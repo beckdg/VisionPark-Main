@@ -32,6 +32,12 @@ class UnauthorizedError extends AppError {
   }
 }
 
+class ForbiddenError extends AppError {
+  constructor(message = "Forbidden", details = null) {
+    super(message, 403, "FORBIDDEN_ERROR", details);
+  }
+}
+
 class InternalServerError extends AppError {
   constructor(message = "Internal server error", details = null) {
     super(message, 500, "INTERNAL_SERVER_ERROR", details);
@@ -44,5 +50,6 @@ module.exports = {
   ConflictError,
   NotFoundError,
   UnauthorizedError,
+  ForbiddenError,
   InternalServerError,
 };

@@ -43,6 +43,30 @@ if (!rawMongoUri) {
   throw new ValidationError("MONGO_URI is required for staging/production environments.");
 }
 
+const defaultJwtSecretByEnv = {
+  development: "dev-only-change-me-in-env",
+  test: "test-jwt-secret-visionpark",
+  staging: null,
+  production: null,
+};
+
+const rawJwtSecret = process.env.JWT_SECRET || defaultJwtSecretByEnv[nodeEnv];
+if (!rawJwtSecret) {
+  throw new ValidationError("JWT_SECRET is required for staging/production environments.");
+}
+
+const defaultAiApiKeyByEnv = {
+  development: "dev-ai-api-key-change-me",
+  test: "test-ai-api-key-visionpark",
+  staging: null,
+  production: null,
+};
+
+const rawAiApiKey = process.env.AI_API_KEY || defaultAiApiKeyByEnv[nodeEnv];
+if (!rawAiApiKey) {
+  throw new ValidationError("AI_API_KEY is required for staging/production environments.");
+}
+
 const rawPort = process.env.PORT || 4000;
 const parsedPort = parsePort(rawPort);
 if (!parsedPort) {
@@ -60,6 +84,9 @@ const env = {
   mongoDbName: process.env.MONGO_DB_NAME || (nodeEnv === "test" ? "visionpark_test" : "visionpark"),
   reservationExpiryJobMs: Number(process.env.RESERVATION_EXPIRY_JOB_MS || 15000),
   reconciliationJobMs: Number(process.env.RECONCILIATION_JOB_MS || 30000),
+  jwtSecret: requireString(rawJwtSecret, "JWT_SECRET"),
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || "1d",
+  aiApiKey: requireString(rawAiApiKey, "AI_API_KEY"),
 };
 
 module.exports = { env };

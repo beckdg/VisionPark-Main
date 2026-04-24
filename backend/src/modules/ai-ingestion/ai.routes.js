@@ -2,11 +2,12 @@ const express = require("express");
 const { AIIngestionService } = require("./ai.service");
 const { env } = require("../../config/env");
 const { ValidationError } = require("../../common/errors");
+const { requireAiApiKey } = require("../auth/auth.middleware");
 
 const router = express.Router();
 const service = new AIIngestionService();
 
-router.post("/events", async (req, res, next) => {
+router.post("/events", requireAiApiKey, async (req, res, next) => {
   try {
     const result = await service.ingestEvent(req.body);
     return res.status(202).json(result);
@@ -15,7 +16,7 @@ router.post("/events", async (req, res, next) => {
   }
 });
 
-router.post("/simulate", async (req, res, next) => {
+router.post("/simulate", requireAiApiKey, async (req, res, next) => {
   try {
     if (!env.isDevelopment && !env.isTest) {
       throw new ValidationError("Simulation endpoint is enabled only in development/test.");

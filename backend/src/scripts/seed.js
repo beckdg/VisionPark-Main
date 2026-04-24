@@ -1,33 +1,34 @@
-const mongoose = require("mongoose");
 const { connectMongo, disconnectMongo } = require("../database/mongo");
 const { logger } = require("../common/logger");
+const { User } = require("../modules/users/models/user.model");
+const { hashPassword } = require("../modules/auth/auth.utils");
 const { ParkingLot } = require("../modules/parking/models/parking-lot.model");
 const { ParkingZone } = require("../modules/parking/models/parking-zone.model");
 const { ParkingSpot } = require("../modules/parking/models/parking-spot.model");
 const { ParkingSession } = require("../modules/sessions/models/parking-session.model");
 
-const upsertUser = async ({ email, name, role }) => {
-  const users = mongoose.connection.collection("users");
-  await users.findOneAndUpdate(
-    { email },
-    {
-      $set: {
-        email,
-        name,
-        role,
-        updatedAt: new Date(),
-      },
-      $setOnInsert: {
-        createdAt: new Date(),
-      },
-    },
-    { upsert: true, returnDocument: "after" }
-  );
+const DEMO_PASSWORD = process.env.SEED_DEMO_PASSWORD || "VisionParkDemo!2026";
 
-  // Some driver versions can return null-ish wrappers for upserts;
-  // always fetch directly so seed stays deterministic.
-  const doc = await users.findOne({ email });
-  return doc;
+const upsertUser = async ({ email, name, role }) => {
+  const passwordHash = await hashPassword(DEMO_PASSWORD);
+  const normalizedEmail = String(email).trim().toLowerCase();
+  let user = await User.findOne({ email: normalizedEmail }).select("+passwordHash");
+  if (user) {
+    user.name = name;
+    user.role = role;
+    user.passwordHash = passwordHash;
+    user.status = "active";
+    await user.save();
+  } else {
+    user = await User.create({
+      name,
+      email: normalizedEmail,
+      role,
+      passwordHash,
+      status: "active",
+    });
+  }
+  return user;
 };
 
 const ensureSampleSession = async ({ driverId, lotId, zoneId, spotId, state, expiresAt, tag }) => {
@@ -150,6 +151,7 @@ const run = async () => {
     lotId: String(lot._id),
     zones: zones.map((z) => String(z._id)),
     spots: spots.map((s) => String(s._id)),
+    demoPasswordSource: process.env.SEED_DEMO_PASSWORD ? "SEED_DEMO_PASSWORD" : "built-in default (see README)",
   });
 };
 

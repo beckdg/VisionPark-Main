@@ -7,7 +7,10 @@ const BASE_URL = process.env.API_BASE_URL || `http://localhost:${env.port}`;
 const postAIEvent = async (payload) => {
   const response = await fetch(`${BASE_URL}/api/ai/events`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": env.aiApiKey,
+    },
     body: JSON.stringify(payload),
   });
   const body = await response.json();

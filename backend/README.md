@@ -27,6 +27,17 @@ Required env vars:
 - `PORT` (default `4000`)
 - `MONGO_URI`
 - `MONGO_DB_NAME` (optional)
+- `JWT_SECRET` (required in staging/production; test/development use safe defaults if unset)
+- `JWT_EXPIRES_IN` (optional, default `1d`)
+- `AI_API_KEY` (required for `POST /api/ai/events` and `POST /api/ai/simulate`; staging/production require explicit values)
+
+Auth endpoints:
+
+- `POST /api/auth/register` — `{ "email", "password", "name", "role" }` (`role`: `driver` | `attendant` | `owner` | `admin`)
+- `POST /api/auth/login` — `{ "email", "password" }` → `{ "token", "user" }`
+- `GET /api/auth/me` — header `Authorization: Bearer <token>`
+
+After `npm run seed`, demo users share password from `SEED_DEMO_PASSWORD` or default `VisionParkDemo!2026` (see seed log).
 
 ## Seed Demo Data
 
