@@ -4,7 +4,8 @@ const { authenticate, authorize, requireUserSelfOrAdmin } = require("../auth/aut
 
 const router = express.Router();
 
-router.post("/", authenticate, authorize("admin"), controller.createUser);
+router.post("/owners", authenticate, authorize("admin"), controller.createOwner);
+router.post("/attendants", authenticate, authorize("owner"), controller.createAttendant);
 router.get("/:id", authenticate, requireUserSelfOrAdmin, controller.getUserById);
 
 module.exports = router;

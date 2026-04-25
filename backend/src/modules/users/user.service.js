@@ -1,6 +1,12 @@
 const { User, USER_ROLES } = require("./models/user.model");
-const { ValidationError, ConflictError, NotFoundError } = require("../../common/errors");
+const {
+  ValidationError,
+  ConflictError,
+  NotFoundError,
+  ForbiddenError,
+} = require("../../common/errors");
 const { hashPassword, toSafeUser } = require("../auth/auth.utils");
+const { ParkingLot } = require("../parking/models/parking-lot.model");
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const hasValue = (value) =>
@@ -205,6 +211,54 @@ class UserService {
       throw new NotFoundError("User not found.");
     }
     return toSafeUser(user);
+  }
+
+  async createOwnerByAdmin(adminUser, payload) {
+    if (!adminUser || adminUser.role !== "admin") {
+      throw new ForbiddenError("Only admin can create owners.");
+    }
+    if (payload?.role && payload.role !== "owner") {
+      throw new ValidationError("role mismatch: this endpoint only creates owner.");
+    }
+    return this.createUser({
+      ...payload,
+      role: "owner",
+    });
+  }
+
+  async createAttendantByOwner(ownerUser, payload) {
+    if (!ownerUser || ownerUser.role !== "owner") {
+      throw new ForbiddenError("Only owner can create attendants.");
+    }
+    if (payload?.role && payload.role !== "attendant") {
+      throw new ValidationError("role mismatch: this endpoint only creates attendant.");
+    }
+
+    const normalized = normalizeRoleInput(payload || {});
+    if (!normalized.attendant || typeof normalized.attendant !== "object") {
+      throw new ValidationError("attendant is required.");
+    }
+    if (!hasValue(normalized.attendant.lotId)) {
+      throw new ValidationError("attendant.lotId is required.");
+    }
+
+    const ownerUserId = ownerUser.userId || ownerUser.id || ownerUser._id;
+    const lot = await ParkingLot.findById(normalized.attendant.lotId).select("ownerId");
+    if (!lot) {
+      throw new NotFoundError("Lot not found.");
+    }
+    if (String(lot.ownerId) !== String(ownerUserId)) {
+      throw new ForbiddenError("attendant.lotId must belong to the authenticated owner.");
+    }
+
+    return this.createUser({
+      ...normalized,
+      role: "attendant",
+      attendant: {
+        ...normalized.attendant,
+        ownerId: String(ownerUserId),
+      },
+    });
   }
 }
 
