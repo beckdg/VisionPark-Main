@@ -26,7 +26,18 @@ class ParkingService {
         400
       );
     }
-    return ParkingLot.create({ ownerId, name, region, city, address });
+    const status = payload?.status || (payload?.isActive === false ? "inactive" : "active");
+    return ParkingLot.create({
+      ownerId,
+      name,
+      region,
+      city,
+      address,
+      status,
+      location: payload?.location || undefined,
+      overstayMultiplier:
+        payload?.overstayMultiplier !== undefined ? payload.overstayMultiplier : 1,
+    });
   }
 
   async createZone(payload) {
@@ -34,21 +45,40 @@ class ParkingService {
     if (!lotId || !name) {
       throw new ValidationError("lotId and name are required.");
     }
-    return ParkingZone.create({ lotId, name, category });
+    const allowedCategories = Array.isArray(payload?.allowedCategories)
+      ? payload.allowedCategories.filter((item) => typeof item === "string" && item.trim())
+      : category
+        ? [String(category).trim()]
+        : [];
+    return ParkingZone.create({
+      lotId,
+      name,
+      category,
+      allowedCategories,
+      isActive: payload?.isActive !== false,
+    });
   }
 
   async createSpot(payload) {
-    const { lotId, zoneId, code, category = null } = payload;
-    if (!lotId || !zoneId || !code) {
+    const { lotId, zoneId } = payload;
+    const spotCode = payload?.spotCode || payload?.code;
+    const category = payload?.category || null;
+    if (!lotId || !zoneId || !spotCode) {
       throw new ValidationError("lotId, zoneId, and code are required.");
     }
+    const allowedCategories = Array.isArray(payload?.allowedCategories)
+      ? payload.allowedCategories.filter((item) => typeof item === "string" && item.trim())
+      : category
+        ? [String(category).trim()]
+        : [];
 
     const spot = await ParkingSpot.create({
       lotId,
       zoneId,
-      code,
-      category,
+      spotCode,
+      allowedCategories,
       status: "free",
+      derivationVersion: 0,
     });
 
     return this.updateSpotStatus(spot._id);
@@ -125,29 +155,28 @@ class ParkingService {
         derivedFromSessionId = reservedSession._id;
       }
 
+      const statusDerivedAt = new Date();
+      const shouldClearDerived = derivedStatus === "free" || derivedStatus === "blocked";
+      const nextDerivedFromSessionId = shouldClearDerived ? null : derivedFromSessionId;
+
       const updatedSpot = await ParkingSpot.findOneAndUpdate(
-        { _id: spot._id, __v: spot.__v },
+        {
+          _id: spot._id,
+          __v: spot.__v,
+          derivationVersion: spot.derivationVersion,
+        },
         {
           $set: {
             status: derivedStatus,
-            derivedFromSessionId,
-            statusDerivedAt: new Date(),
+            derivedFromSessionId: nextDerivedFromSessionId,
+            statusDerivedAt,
           },
-          $inc: { __v: 1 },
+          $inc: { __v: 1, derivationVersion: 1 },
         },
         { new: true }
       );
 
       if (updatedSpot) {
-        if (updatedSpot.status === "free" || updatedSpot.status === "blocked") {
-          if (updatedSpot.derivedFromSessionId) {
-            await ParkingSpot.findByIdAndUpdate(updatedSpot._id, {
-              $set: { derivedFromSessionId: null, statusDerivedAt: new Date() },
-            });
-            updatedSpot.derivedFromSessionId = null;
-          }
-        }
-
         domainEventBus.emitEvent(
           DOMAIN_EVENTS.SPOT_STATUS_DERIVED,
           {
@@ -162,7 +191,7 @@ class ParkingService {
             at: new Date().toISOString(),
           },
           {
-            eventId: `spot-status:${String(updatedSpot._id)}:${updatedSpot.status}:${updatedSpot.__v}`,
+            eventId: `spot-status:${String(updatedSpot._id)}:${updatedSpot.status}:${updatedSpot.derivationVersion}`,
           }
         );
 

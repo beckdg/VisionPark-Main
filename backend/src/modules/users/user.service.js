@@ -6,126 +6,156 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const hasValue = (value) =>
   value !== undefined && value !== null && String(value).trim().length > 0;
 
+const normalizeRoleInput = (payload = {}) => {
+  const normalized = { ...payload };
+  if (normalized.driverProfile && !normalized.driver) {
+    normalized.driver = normalized.driverProfile;
+  }
+  if (normalized.ownerProfile && !normalized.owner) {
+    normalized.owner = normalized.ownerProfile;
+  }
+  if (normalized.attendantProfile && !normalized.attendant) {
+    normalized.attendant = normalized.attendantProfile;
+  }
+  if (normalized.attendant?.branchId && !normalized.attendant.lotId) {
+    normalized.attendant.lotId = normalized.attendant.branchId;
+  }
+  return normalized;
+};
+
 const sanitizeRoleProfiles = (role, payload = {}) => {
-  const hasDriverProfile = payload.driverProfile !== undefined;
-  const hasOwnerProfile = payload.ownerProfile !== undefined;
-  const hasAttendantProfile = payload.attendantProfile !== undefined;
+  const hasDriver = payload.driver !== undefined;
+  const hasOwner = payload.owner !== undefined;
+  const hasAttendant = payload.attendant !== undefined;
 
   if (role === "driver") {
     if (
-      !hasDriverProfile ||
-      !payload.driverProfile ||
-      typeof payload.driverProfile !== "object"
+      !hasDriver ||
+      !payload.driver ||
+      typeof payload.driver !== "object"
     ) {
-      throw new ValidationError("driverProfile is required when role is driver.");
+      throw new ValidationError("driver is required when role is driver.");
     }
-    if (!hasValue(payload.driverProfile.licensePlate)) {
+    if (!hasValue(payload.driver.licensePlate)) {
       throw new ValidationError(
-        "driverProfile.licensePlate is required when role is driver."
+        "driver.licensePlate is required when role is driver."
       );
     }
-    if (hasOwnerProfile || hasAttendantProfile) {
-      throw new ValidationError("Only driverProfile is allowed when role is driver.");
+    if (hasOwner || hasAttendant) {
+      throw new ValidationError("Only driver is allowed when role is driver.");
     }
     return {
-      driverProfile: {
-        phone: hasValue(payload.driverProfile.phone)
-          ? String(payload.driverProfile.phone).trim()
+      driver: {
+        phone: hasValue(payload.driver.phone)
+          ? String(payload.driver.phone).trim()
           : null,
-        licensePlate: String(payload.driverProfile.licensePlate).trim(),
-        vehicleType: hasValue(payload.driverProfile.vehicleType)
-          ? String(payload.driverProfile.vehicleType).trim()
+        licensePlate: String(payload.driver.licensePlate).trim(),
+        vehicleType: hasValue(payload.driver.vehicleType)
+          ? String(payload.driver.vehicleType).trim()
           : null,
-        licenseType: hasValue(payload.driverProfile.licenseType)
-          ? String(payload.driverProfile.licenseType).trim()
+        region: hasValue(payload.driver.region)
+          ? String(payload.driver.region).trim()
           : null,
-        region: hasValue(payload.driverProfile.region)
-          ? String(payload.driverProfile.region).trim()
+        country: hasValue(payload.driver.country)
+          ? String(payload.driver.country).trim()
+          : null,
+        paymentMethod: hasValue(payload.driver.paymentMethod)
+          ? String(payload.driver.paymentMethod).trim()
+          : null,
+        paymentAccount: hasValue(payload.driver.paymentAccount)
+          ? String(payload.driver.paymentAccount).trim()
           : null,
       },
-      ownerProfile: null,
-      attendantProfile: null,
+      owner: null,
+      attendant: null,
     };
   }
 
   if (role === "owner") {
     if (
-      !hasOwnerProfile ||
-      !payload.ownerProfile ||
-      typeof payload.ownerProfile !== "object"
+      !hasOwner ||
+      !payload.owner ||
+      typeof payload.owner !== "object"
     ) {
-      throw new ValidationError("ownerProfile is required when role is owner.");
+      throw new ValidationError("owner is required when role is owner.");
     }
-    if (hasDriverProfile || hasAttendantProfile) {
-      throw new ValidationError("Only ownerProfile is allowed when role is owner.");
+    if (hasDriver || hasAttendant) {
+      throw new ValidationError("Only owner is allowed when role is owner.");
     }
     return {
-      driverProfile: null,
-      ownerProfile: {
-        phone: hasValue(payload.ownerProfile.phone)
-          ? String(payload.ownerProfile.phone).trim()
+      driver: null,
+      owner: {
+        phone: hasValue(payload.owner.phone)
+          ? String(payload.owner.phone).trim()
           : null,
-        companyName: hasValue(payload.ownerProfile.companyName)
-          ? String(payload.ownerProfile.companyName).trim()
+        companyName: hasValue(payload.owner.companyName)
+          ? String(payload.owner.companyName).trim()
           : null,
-        tinNumber: hasValue(payload.ownerProfile.tinNumber)
-          ? String(payload.ownerProfile.tinNumber).trim()
+        tinNumber: hasValue(payload.owner.tinNumber)
+          ? String(payload.owner.tinNumber).trim()
           : null,
       },
-      attendantProfile: null,
+      attendant: null,
     };
   }
 
   if (role === "attendant") {
     if (
-      !hasAttendantProfile ||
-      !payload.attendantProfile ||
-      typeof payload.attendantProfile !== "object"
+      !hasAttendant ||
+      !payload.attendant ||
+      typeof payload.attendant !== "object"
     ) {
-      throw new ValidationError("attendantProfile is required when role is attendant.");
+      throw new ValidationError("attendant is required when role is attendant.");
     }
-    if (hasDriverProfile || hasOwnerProfile) {
-      throw new ValidationError("Only attendantProfile is allowed when role is attendant.");
+    if (hasDriver || hasOwner) {
+      throw new ValidationError("Only attendant is allowed when role is attendant.");
     }
-    const ownerId = payload.attendantProfile.ownerId;
-    const branchId = payload.attendantProfile.branchId;
-    if (!hasValue(ownerId) || !hasValue(branchId)) {
+    const ownerId = payload.attendant.ownerId;
+    const lotId = payload.attendant.lotId;
+    if (!hasValue(ownerId) || !hasValue(lotId)) {
       throw new ValidationError(
-        "attendantProfile.ownerId and attendantProfile.branchId are required when role is attendant."
+        "attendant.ownerId and attendant.lotId are required when role is attendant."
       );
     }
     return {
-      driverProfile: null,
-      ownerProfile: null,
-      attendantProfile: {
+      driver: null,
+      owner: null,
+      attendant: {
         ownerId,
-        branchId,
-        phone: hasValue(payload.attendantProfile.phone)
-          ? String(payload.attendantProfile.phone).trim()
+        lotId,
+        faydaId: hasValue(payload.attendant.faydaId)
+          ? String(payload.attendant.faydaId).trim()
           : null,
-        shiftStart: hasValue(payload.attendantProfile.shiftStart)
-          ? String(payload.attendantProfile.shiftStart).trim()
+        phone: hasValue(payload.attendant.phone)
+          ? String(payload.attendant.phone).trim()
           : null,
-        shiftEnd: hasValue(payload.attendantProfile.shiftEnd)
-          ? String(payload.attendantProfile.shiftEnd).trim()
+        address: hasValue(payload.attendant.address)
+          ? String(payload.attendant.address).trim()
+          : null,
+        shiftStart: hasValue(payload.attendant.shiftStart)
+          ? String(payload.attendant.shiftStart).trim()
+          : null,
+        shiftEnd: hasValue(payload.attendant.shiftEnd)
+          ? String(payload.attendant.shiftEnd).trim()
           : null,
       },
     };
   }
 
-  if (hasDriverProfile || hasOwnerProfile || hasAttendantProfile) {
+  if (hasDriver || hasOwner || hasAttendant) {
     throw new ValidationError("Role admin does not accept role-specific profiles.");
   }
   return {
-    driverProfile: null,
-    ownerProfile: null,
-    attendantProfile: null,
+    driver: null,
+    owner: null,
+    attendant: null,
   };
 };
 
 class UserService {
   async createUser(payload) {
-    const { name, email, role, password } = payload || {};
+    const normalized = normalizeRoleInput(payload || {});
+    const { name, email, role, password } = normalized;
 
     if (!name || !email || !role || !password) {
       throw new ValidationError("name, email, role, and password are required.");
@@ -144,21 +174,21 @@ class UserService {
 
     const passwordHash = await hashPassword(password);
     const normalizedEmail = String(email).trim().toLowerCase();
-    const { driverProfile, ownerProfile, attendantProfile } = sanitizeRoleProfiles(
-      role,
-      payload || {}
-    );
+    const { driver, owner, attendant } = sanitizeRoleProfiles(role, normalized);
 
     try {
       const user = await User.create({
         name: name.trim(),
         email: normalizedEmail,
         role,
+        avatarUrl: hasValue(normalized.avatarUrl)
+          ? String(normalized.avatarUrl).trim()
+          : null,
         passwordHash,
         status: "active",
-        driverProfile,
-        ownerProfile,
-        attendantProfile,
+        driver,
+        owner,
+        attendant,
       });
       return toSafeUser(user);
     } catch (error) {

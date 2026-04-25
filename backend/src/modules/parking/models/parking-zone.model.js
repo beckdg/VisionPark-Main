@@ -10,6 +10,7 @@ const parkingZoneSchema = new mongoose.Schema(
     },
     name: { type: String, required: true, trim: true },
     category: { type: String, trim: true, default: null },
+    allowedCategories: { type: [String], default: [] },
     isActive: { type: Boolean, default: true, index: true },
   },
   { timestamps: true }

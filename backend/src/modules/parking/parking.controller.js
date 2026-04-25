@@ -10,6 +10,10 @@ const createLot = async (req, res, next) => {
       region: req.body.region,
       city: req.body.city,
       address: req.body.address,
+      location: req.body.location,
+      status: req.body.status,
+      isActive: req.body.isActive,
+      overstayMultiplier: req.body.overstayMultiplier,
     });
     return res.status(201).json(lot);
   } catch (error) {
@@ -23,6 +27,8 @@ const createZone = async (req, res, next) => {
       lotId: req.body.lotId,
       name: req.body.name,
       category: req.body.category,
+      allowedCategories: req.body.allowedCategories,
+      isActive: req.body.isActive,
     });
     return res.status(201).json(zone);
   } catch (error) {
@@ -35,8 +41,10 @@ const createSpot = async (req, res, next) => {
     const spot = await parkingService.createSpot({
       lotId: req.body.lotId,
       zoneId: req.body.zoneId,
+      spotCode: req.body.spotCode,
       code: req.body.code,
       category: req.body.category,
+      allowedCategories: req.body.allowedCategories,
     });
     return res.status(201).json(spot);
   } catch (error) {

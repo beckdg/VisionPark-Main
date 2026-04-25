@@ -15,6 +15,18 @@ const toSafeUser = (userDoc) => {
   if (!userDoc) return null;
   const o = userDoc.toObject ? userDoc.toObject() : { ...userDoc };
   delete o.passwordHash;
+  if (o.driver && o.driverProfile === undefined) {
+    o.driverProfile = o.driver;
+  }
+  if (o.owner && o.ownerProfile === undefined) {
+    o.ownerProfile = o.owner;
+  }
+  if (o.attendant && o.attendantProfile === undefined) {
+    o.attendantProfile = {
+      ...o.attendant,
+      branchId: o.attendant.lotId || o.attendant.branchId || null,
+    };
+  }
   return o;
 };
 

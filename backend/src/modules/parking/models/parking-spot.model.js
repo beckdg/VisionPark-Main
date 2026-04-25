@@ -16,9 +16,9 @@ const parkingSpotSchema = new mongoose.Schema(
       index: true,
       ref: "ParkingZone",
     },
-    code: { type: String, required: true, trim: true },
-    category: { type: String, trim: true, default: null },
+    spotCode: { type: String, required: true, trim: true },
     isBlocked: { type: Boolean, default: false, index: true },
+    allowedCategories: { type: [String], default: [] },
     status: {
       type: String,
       enum: SPOT_STATES,
@@ -32,6 +32,7 @@ const parkingSpotSchema = new mongoose.Schema(
       default: null,
     },
     statusDerivedAt: { type: Date, default: Date.now },
+    derivationVersion: { type: Number, default: 0 },
   },
   {
     timestamps: true,
@@ -40,9 +41,32 @@ const parkingSpotSchema = new mongoose.Schema(
 );
 
 parkingSpotSchema.index(
-  { lotId: 1, zoneId: 1, code: 1 },
+  { lotId: 1, zoneId: 1, spotCode: 1 },
   { unique: true, name: "uniq_spot_code_within_zone" }
 );
+
+parkingSpotSchema.virtual("code")
+  .get(function getCode() {
+    return this.spotCode;
+  })
+  .set(function setCode(value) {
+    this.spotCode = value;
+  });
+
+parkingSpotSchema.virtual("category")
+  .get(function getCategory() {
+    return this.allowedCategories?.[0] || null;
+  })
+  .set(function setCategory(value) {
+    if (value == null || String(value).trim() === "") {
+      this.allowedCategories = [];
+      return;
+    }
+    this.allowedCategories = [String(value).trim()];
+  });
+
+parkingSpotSchema.set("toJSON", { virtuals: true });
+parkingSpotSchema.set("toObject", { virtuals: true });
 
 const ParkingSpot = mongoose.model("ParkingSpot", parkingSpotSchema);
 

@@ -15,112 +15,136 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const hasValue = (value) =>
   value !== undefined && value !== null && String(value).trim().length > 0;
 
+const normalizeRoleInput = (data = {}) => {
+  const normalized = { ...data };
+  if (normalized.driverProfile && !normalized.driver) {
+    normalized.driver = normalized.driverProfile;
+  }
+  if (normalized.ownerProfile && !normalized.owner) {
+    normalized.owner = normalized.ownerProfile;
+  }
+  if (normalized.attendantProfile && !normalized.attendant) {
+    normalized.attendant = normalized.attendantProfile;
+  }
+  if (normalized.attendant?.branchId && !normalized.attendant.lotId) {
+    normalized.attendant.lotId = normalized.attendant.branchId;
+  }
+  return normalized;
+};
+
 const sanitizeRoleProfiles = (role, data = {}) => {
-  const hasDriverProfile = data.driverProfile !== undefined;
-  const hasOwnerProfile = data.ownerProfile !== undefined;
-  const hasAttendantProfile = data.attendantProfile !== undefined;
+  const hasDriver = data.driver !== undefined;
+  const hasOwner = data.owner !== undefined;
+  const hasAttendant = data.attendant !== undefined;
 
   if (role === "driver") {
-    if (!hasDriverProfile || !data.driverProfile || typeof data.driverProfile !== "object") {
-      throw new ValidationError("driverProfile is required when role is driver.");
+    if (!hasDriver || !data.driver || typeof data.driver !== "object") {
+      throw new ValidationError("driver is required when role is driver.");
     }
-    if (!hasValue(data.driverProfile.licensePlate)) {
+    if (!hasValue(data.driver.licensePlate)) {
       throw new ValidationError(
-        "driverProfile.licensePlate is required when role is driver."
+        "driver.licensePlate is required when role is driver."
       );
     }
-    if (hasOwnerProfile || hasAttendantProfile) {
-      throw new ValidationError("Only driverProfile is allowed when role is driver.");
+    if (hasOwner || hasAttendant) {
+      throw new ValidationError("Only driver is allowed when role is driver.");
     }
     return {
-      driverProfile: {
-        phone: hasValue(data.driverProfile.phone) ? String(data.driverProfile.phone).trim() : null,
-        licensePlate: String(data.driverProfile.licensePlate).trim(),
-        vehicleType: hasValue(data.driverProfile.vehicleType)
-          ? String(data.driverProfile.vehicleType).trim()
+      driver: {
+        phone: hasValue(data.driver.phone) ? String(data.driver.phone).trim() : null,
+        licensePlate: String(data.driver.licensePlate).trim(),
+        vehicleType: hasValue(data.driver.vehicleType)
+          ? String(data.driver.vehicleType).trim()
           : null,
-        licenseType: hasValue(data.driverProfile.licenseType)
-          ? String(data.driverProfile.licenseType).trim()
+        region: hasValue(data.driver.region) ? String(data.driver.region).trim() : null,
+        country: hasValue(data.driver.country) ? String(data.driver.country).trim() : null,
+        paymentMethod: hasValue(data.driver.paymentMethod)
+          ? String(data.driver.paymentMethod).trim()
           : null,
-        region: hasValue(data.driverProfile.region) ? String(data.driverProfile.region).trim() : null,
+        paymentAccount: hasValue(data.driver.paymentAccount)
+          ? String(data.driver.paymentAccount).trim()
+          : null,
       },
-      ownerProfile: null,
-      attendantProfile: null,
+      owner: null,
+      attendant: null,
     };
   }
 
   if (role === "owner") {
-    if (!hasOwnerProfile || !data.ownerProfile || typeof data.ownerProfile !== "object") {
-      throw new ValidationError("ownerProfile is required when role is owner.");
+    if (!hasOwner || !data.owner || typeof data.owner !== "object") {
+      throw new ValidationError("owner is required when role is owner.");
     }
-    if (hasDriverProfile || hasAttendantProfile) {
-      throw new ValidationError("Only ownerProfile is allowed when role is owner.");
+    if (hasDriver || hasAttendant) {
+      throw new ValidationError("Only owner is allowed when role is owner.");
     }
     return {
-      driverProfile: null,
-      ownerProfile: {
-        phone: hasValue(data.ownerProfile.phone) ? String(data.ownerProfile.phone).trim() : null,
-        companyName: hasValue(data.ownerProfile.companyName)
-          ? String(data.ownerProfile.companyName).trim()
+      driver: null,
+      owner: {
+        phone: hasValue(data.owner.phone) ? String(data.owner.phone).trim() : null,
+        companyName: hasValue(data.owner.companyName)
+          ? String(data.owner.companyName).trim()
           : null,
-        tinNumber: hasValue(data.ownerProfile.tinNumber)
-          ? String(data.ownerProfile.tinNumber).trim()
+        tinNumber: hasValue(data.owner.tinNumber)
+          ? String(data.owner.tinNumber).trim()
           : null,
       },
-      attendantProfile: null,
+      attendant: null,
     };
   }
 
   if (role === "attendant") {
-    if (
-      !hasAttendantProfile ||
-      !data.attendantProfile ||
-      typeof data.attendantProfile !== "object"
-    ) {
-      throw new ValidationError("attendantProfile is required when role is attendant.");
+    if (!hasAttendant || !data.attendant || typeof data.attendant !== "object") {
+      throw new ValidationError("attendant is required when role is attendant.");
     }
-    if (hasDriverProfile || hasOwnerProfile) {
-      throw new ValidationError("Only attendantProfile is allowed when role is attendant.");
+    if (hasDriver || hasOwner) {
+      throw new ValidationError("Only attendant is allowed when role is attendant.");
     }
-    const ownerId = data.attendantProfile.ownerId;
-    const branchId = data.attendantProfile.branchId;
-    if (!hasValue(ownerId) || !hasValue(branchId)) {
+    const ownerId = data.attendant.ownerId;
+    const lotId = data.attendant.lotId;
+    if (!hasValue(ownerId) || !hasValue(lotId)) {
       throw new ValidationError(
-        "attendantProfile.ownerId and attendantProfile.branchId are required when role is attendant."
+        "attendant.ownerId and attendant.lotId are required when role is attendant."
       );
     }
     return {
-      driverProfile: null,
-      ownerProfile: null,
-      attendantProfile: {
+      driver: null,
+      owner: null,
+      attendant: {
         ownerId,
-        branchId,
-        phone: hasValue(data.attendantProfile.phone)
-          ? String(data.attendantProfile.phone).trim()
+        lotId,
+        faydaId: hasValue(data.attendant.faydaId)
+          ? String(data.attendant.faydaId).trim()
           : null,
-        shiftStart: hasValue(data.attendantProfile.shiftStart)
-          ? String(data.attendantProfile.shiftStart).trim()
+        phone: hasValue(data.attendant.phone)
+          ? String(data.attendant.phone).trim()
           : null,
-        shiftEnd: hasValue(data.attendantProfile.shiftEnd)
-          ? String(data.attendantProfile.shiftEnd).trim()
+        address: hasValue(data.attendant.address)
+          ? String(data.attendant.address).trim()
+          : null,
+        shiftStart: hasValue(data.attendant.shiftStart)
+          ? String(data.attendant.shiftStart).trim()
+          : null,
+        shiftEnd: hasValue(data.attendant.shiftEnd)
+          ? String(data.attendant.shiftEnd).trim()
           : null,
       },
     };
   }
 
   // admin
-  if (hasDriverProfile || hasOwnerProfile || hasAttendantProfile) {
+  if (hasDriver || hasOwner || hasAttendant) {
     throw new ValidationError("Role admin does not accept role-specific profiles.");
   }
   return {
-    driverProfile: null,
-    ownerProfile: null,
-    attendantProfile: null,
+    driver: null,
+    owner: null,
+    attendant: null,
   };
 };
 
 const validateRegisterPayload = (data) => {
-  const { email, password, name, role } = data || {};
+  const normalized = normalizeRoleInput(data || {});
+  const { email, password, name, role } = normalized;
   if (!name || typeof name !== "string" || !name.trim()) {
     throw new ValidationError("name is required.");
   }
@@ -141,7 +165,10 @@ const validateRegisterPayload = (data) => {
     password,
     name: name.trim(),
     role,
-    ...sanitizeRoleProfiles(role, data || {}),
+    avatarUrl: hasValue(normalized.avatarUrl)
+      ? String(normalized.avatarUrl).trim()
+      : null,
+    ...sanitizeRoleProfiles(role, normalized),
   };
 };
 
@@ -152,9 +179,10 @@ class AuthService {
       password,
       name,
       role,
-      driverProfile,
-      ownerProfile,
-      attendantProfile,
+      avatarUrl,
+      driver,
+      owner,
+      attendant,
     } = validateRegisterPayload(data);
     if (role === "admin") {
       throw new ForbiddenError("Self-registration for admin role is not allowed.");
@@ -166,11 +194,12 @@ class AuthService {
         name,
         email,
         role,
+        avatarUrl,
         passwordHash,
         status: "active",
-        driverProfile,
-        ownerProfile,
-        attendantProfile,
+        driver,
+        owner,
+        attendant,
       });
       return toSafeUser(user);
     } catch (error) {
