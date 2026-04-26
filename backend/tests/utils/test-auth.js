@@ -1,6 +1,8 @@
 const request = require("supertest");
 
 const DEFAULT_PASSWORD = "testpassword12";
+const DEFAULT_OWNER_ID = "507f1f77bcf86cd799439011";
+const DEFAULT_LOT_ID = "507f1f77bcf86cd799439012";
 
 const authHeader = (token) => ({
   Authorization: `Bearer ${token}`,
@@ -10,12 +12,41 @@ const aiApiKeyHeader = (key) => ({
   "x-api-key": key,
 });
 
-const registerUser = async (app, { email, name, role, password = DEFAULT_PASSWORD }) => {
+const withRoleDefaults = (payload = {}) => {
+  const normalized = { ...payload };
+  if (normalized.role === "driver" && !normalized.driver) {
+    normalized.driver = { licensePlate: "TEST-1234" };
+  }
+  if (normalized.role === "owner" && !normalized.owner) {
+    normalized.owner = { companyName: "Test Owner Co" };
+  }
+  if (normalized.role === "attendant" && !normalized.attendant) {
+    normalized.attendant = {
+      ownerId: DEFAULT_OWNER_ID,
+      lotId: DEFAULT_LOT_ID,
+    };
+  }
+  return normalized;
+};
+
+const registerUser = async (app, payload) => {
+  const {
+    email,
+    name,
+    role,
+    password = DEFAULT_PASSWORD,
+    driver,
+    owner,
+    attendant,
+  } = withRoleDefaults(payload);
   const res = await request(app).post("/api/auth/register").send({
     email,
     name,
     role,
     password,
+    driver,
+    owner,
+    attendant,
   });
   return { res, password, user: res.status === 201 ? res.body : null };
 };
@@ -25,8 +56,10 @@ const loginUser = async (app, { email, password = DEFAULT_PASSWORD }) => {
   return res;
 };
 
-const registerAndLogin = async (app, { email, name, role, password = DEFAULT_PASSWORD }) => {
-  const reg = await registerUser(app, { email, name, role, password });
+const registerAndLogin = async (app, payload) => {
+  const normalized = withRoleDefaults(payload);
+  const { email, password = DEFAULT_PASSWORD } = normalized;
+  const reg = await registerUser(app, normalized);
   if (reg.res.status !== 201) {
     throw new Error(`register failed: ${reg.res.status} ${JSON.stringify(reg.res.body)}`);
   }

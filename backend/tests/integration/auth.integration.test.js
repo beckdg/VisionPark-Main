@@ -28,6 +28,9 @@ describe("Auth API", () => {
       email,
       name: "Auth User",
       role: "driver",
+      driver: {
+        licensePlate: "TEST-1234",
+      },
       password: "longpassword1",
     });
     expect(reg.status).toBe(201);
