@@ -4,12 +4,13 @@
  * UX: Validates inputs on blur to avoid annoying the user while they are actively typing.
  */
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { 
   Users, Plus, Trash2, Edit2, Mail, Lock, 
   Phone, MapPin, X, Key, ShieldCheck, AlertCircle, 
   RefreshCw, Eye, EyeOff, UploadCloud, Check, ChevronDown, Clock, Sun, Moon, Sunrise
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
 
 // --- REQUIRED DATA STRUCTURES FOR DROPDOWNS ---
 const REGION_GROUPS = [
@@ -23,25 +24,16 @@ const CITIES_BY_REGION = {
   "Tigray Region": ["Mekelle"], "Somali Region": ["Jigjiga"], "Sidama Region": ["Hawassa"]
 };
 
-const BRANCHES_BY_CITY = {
-  "Addis Ababa": ["Bole Airport Parking", "Piazza Street Parking", "Meskel Square Parking"],
-  "Adama": ["Adama Bus Terminal Parking", "Stadium Parking"],
-  "Dire Dawa": ["Dire Dawa Central Parking"],
-  "Bahir Dar": ["Bahir Dar Lake Parking"],
-  "Mekelle": ["Mekelle City Parking"],
-  "Jigjiga": ["Jigjiga Market Parking"],
-  "Hawassa": ["Hawassa Park & Ride"]
-};
+const isValidObjectId = (id) => typeof id === "string" && /^[a-fA-F0-9]{24}$/.test(id);
 
-// --- MOCK DATA ---
-const INITIAL_ATTENDANTS = [
-  {
-    id: "att_01", name: "Kebede Alemu", email: "kebede.visionpark@gmail.com", phone: "+251 911 234 567",
-    faydaId: "1234 5678 9012 3456", address: "Bole, Addis Ababa", branch: "Bole Airport Parking",
-    shiftStart: "06:00 AM", shiftEnd: "02:00 PM", 
-    status: "Active", avatar: "https://i.pravatar.cc/150?u=kebede"
-  }
-];
+const lotsMatchingCity = (lots, city) =>
+  lots.filter((l) => String(l.city || "").trim() === String(city || "").trim());
+
+/** Prefer lots whose DB city matches the form city; if none match (common with UI presets), list all owner lots. */
+const lotsForBranchSelect = (lots, city) => {
+  const matched = lotsMatchingCity(lots, city);
+  return matched.length > 0 ? matched : lots;
+};
 
 const DropdownTrigger = ({ label, value, onClick, disabled }) => (
   <div className="space-y-1.5 w-full min-w-0">
@@ -118,29 +110,62 @@ const getShiftLabel = (start, end) => {
 };
 
 export default function AttendantManagement() {
-  const [attendants, setAttendants] = useState(INITIAL_ATTENDANTS);
+  const [attendants, setAttendants] = useState([]);
+  const [ownerLots, setOwnerLots] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [activeDropdown, setActiveDropdown] = useState(null); 
+  const [activeDropdown, setActiveDropdown] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "", email: "", phone: "", faydaId: "", address: "", password: "",
-    region: "Addis Ababa", city: "Addis Ababa", branch: "Bole Airport Parking",
+    region: "Addis Ababa", city: "Addis Ababa", branch: "", lotId: "",
     shiftStart: "06:00 AM", shiftEnd: "02:00 PM"
   });
 
   const [errors, setErrors] = useState({});
   const [avatarPreview, setAvatarPreview] = useState(null);
+  const [avatarUrl, setAvatarUrl] = useState(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const lots = await apiClient.get("/parking/lots");
+        if (!cancelled && Array.isArray(lots)) setOwnerLots(lots);
+      } catch {
+        if (!cancelled) setOwnerLots([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isModalOpen || ownerLots.length === 0) return;
+    setFormData((prev) => {
+      if (prev.lotId) return prev;
+      const first = lotsForBranchSelect(ownerLots, prev.city)[0];
+      if (!first) return prev;
+      return { ...prev, branch: first.name, lotId: String(first._id) };
+    });
+  }, [isModalOpen, ownerLots]);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
-    if (file) setAvatarPreview(URL.createObjectURL(file));
+    if (!file) return;
+    setAvatarPreview(URL.createObjectURL(file));
+    const reader = new FileReader();
+    reader.onload = () => setAvatarUrl(typeof reader.result === "string" ? reader.result : null);
+    reader.readAsDataURL(file);
   };
 
   const handleRemoveImage = (e) => {
     e.preventDefault();
     setAvatarPreview(null);
+    setAvatarUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -233,11 +258,11 @@ export default function AttendantManagement() {
     setFormData(prev => ({ ...prev, shiftStart: start, shiftEnd: end }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Manually run all validations on submit just in case they bypassed the blur events
-    const fVal = formData.faydaId.replace(/\D/g, '');
+    if (submitting) return;
+
+    const fVal = formData.faydaId.replace(/\D/g, "");
     const eVal = formData.email;
     const pVal = formData.phone;
     const passVal = formData.password;
@@ -245,37 +270,93 @@ export default function AttendantManagement() {
     let hasErrors = false;
     if (fVal.length !== 16) hasErrors = true;
     if (!eVal.toLowerCase().endsWith("@gmail.com")) hasErrors = true;
-    if (pVal.length !== 9 || (pVal[0] !== '9' && pVal[0] !== '7')) hasErrors = true;
+    if (pVal.length !== 9 || (pVal[0] !== "9" && pVal[0] !== "7")) hasErrors = true;
     if (checkPasswordStrength(passVal)) hasErrors = true;
-    if (!formData.branch || !formData.shiftStart || !formData.shiftEnd) hasErrors = true;
+    if (!formData.shiftStart || !formData.shiftEnd) hasErrors = true;
+    if (!formData.lotId || !isValidObjectId(formData.lotId)) hasErrors = true;
 
     if (hasErrors) {
       handleFaydaBlur();
       handleEmailBlur();
       handlePhoneBlur();
       handlePasswordBlur();
-      alert("Please fix the errors and ensure a branch and shift time are assigned before submitting.");
+      alert(
+        !formData.lotId || !isValidObjectId(formData.lotId)
+          ? "Please select a valid parking lot (branch) before submitting."
+          : "Please fix the errors and ensure a branch and shift time are assigned before submitting."
+      );
       return;
     }
 
-    const formattedPhone = `+251 ${formData.phone.substring(0,3)} ${formData.phone.substring(3,6)} ${formData.phone.substring(6,9)}`;
+    const formattedPhone = `+251 ${formData.phone.substring(0, 3)} ${formData.phone.substring(3, 6)} ${formData.phone.substring(6, 9)}`;
 
-    const newAttendant = {
-      id: `att_${Date.now()}`,
-      name: formData.name, email: formData.email, phone: formattedPhone,
-      faydaId: formData.faydaId, address: formData.address, branch: formData.branch,
-      shiftStart: formData.shiftStart, shiftEnd: formData.shiftEnd, 
-      status: "Active", avatar: avatarPreview || `https://i.pravatar.cc/150?u=${formData.name.replace(/\s/g, '')}`
+    const payload = {
+      name: formData.name.trim(),
+      email: formData.email.trim().toLowerCase(),
+      password: formData.password,
+      attendant: {
+        lotId: formData.lotId,
+        phone: formattedPhone,
+        faydaId: fVal,
+        shiftStart: formData.shiftStart,
+        shiftEnd: formData.shiftEnd,
+        address: formData.address.trim(),
+      },
     };
+    if (avatarUrl) payload.avatarUrl = avatarUrl;
 
-    setAttendants([...attendants, newAttendant]);
-    closeModal();
+    setSubmitting(true);
+    try {
+      const created = await apiClient.post("/users/attendants", payload);
+      const lot = ownerLots.find((l) => String(l._id) === String(created?.attendant?.lotId ?? formData.lotId));
+      const displayBranch = lot?.name || formData.branch;
+      const avatar =
+        created?.avatarUrl ||
+        avatarPreview ||
+        `https://i.pravatar.cc/150?u=${encodeURIComponent(formData.name.replace(/\s/g, "") || "user")}`;
+
+      const newAttendant = {
+        id: String(created?._id ?? created?.id ?? `att_${Date.now()}`),
+        name: created?.name ?? formData.name,
+        email: created?.email ?? formData.email,
+        phone: formattedPhone,
+        faydaId: formData.faydaId,
+        address: formData.address,
+        branch: displayBranch,
+        shiftStart: formData.shiftStart,
+        shiftEnd: formData.shiftEnd,
+        status: created?.status === "inactive" ? "Inactive" : "Active",
+        avatar,
+      };
+
+      setAttendants((prev) => [...prev, newAttendant]);
+      alert("Attendant registered successfully.");
+      closeModal();
+    } catch (err) {
+      alert(err?.message || "Failed to register attendant.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const closeModal = () => {
     setIsModalOpen(false);
-    setFormData({ name: "", email: "", phone: "", faydaId: "", address: "", password: "", region: "Addis Ababa", city: "Addis Ababa", branch: "Bole Airport Parking", shiftStart: "06:00 AM", shiftEnd: "02:00 PM" });
+    setFormData({
+      name: "",
+      email: "",
+      phone: "",
+      faydaId: "",
+      address: "",
+      password: "",
+      region: "Addis Ababa",
+      city: "Addis Ababa",
+      branch: "",
+      lotId: "",
+      shiftStart: "06:00 AM",
+      shiftEnd: "02:00 PM",
+    });
     setAvatarPreview(null);
+    setAvatarUrl(null);
     setErrors({});
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -532,7 +613,7 @@ export default function AttendantManagement() {
             </div>
             
             <div className="p-4 md:p-6 border-t border-zinc-100 dark:border-white/5 shrink-0 bg-white dark:bg-[#18181b]">
-              <button form="attendantForm" type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold py-3 md:py-3.5 text-sm md:text-base rounded-xl shadow-lg shadow-emerald-500/20 transition-transform active:scale-95 outline-none">
+              <button form="attendantForm" type="submit" disabled={submitting} className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 disabled:pointer-events-none text-zinc-950 font-bold py-3 md:py-3.5 text-sm md:text-base rounded-xl shadow-lg shadow-emerald-500/20 transition-transform active:scale-95 outline-none">
                 Register Attendant
               </button>
             </div>
@@ -558,7 +639,19 @@ export default function AttendantManagement() {
                   <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">{group.group}</div>
                   <div className="flex flex-col gap-1">
                     {group.options.map(opt => (
-                      <button type="button" key={opt} onClick={() => { setFormData({...formData, region: opt, city: CITIES_BY_REGION[opt][0], branch: BRANCHES_BY_CITY[CITIES_BY_REGION[opt][0]]?.[0] || "" }); setActiveDropdown(null); }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none transition-colors">
+                      <button type="button" key={opt} onClick={() => {
+                        const firstCity = CITIES_BY_REGION[opt][0];
+                        const matching = lotsForBranchSelect(ownerLots, firstCity);
+                        const firstLot = matching[0];
+                        setFormData({
+                          ...formData,
+                          region: opt,
+                          city: firstCity,
+                          branch: firstLot?.name || "",
+                          lotId: firstLot ? String(firstLot._id) : "",
+                        });
+                        setActiveDropdown(null);
+                      }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none transition-colors">
                         {opt} {formData.region === opt && <Check className="h-4 w-4 text-emerald-500" />}
                       </button>
                     ))}
@@ -567,20 +660,37 @@ export default function AttendantManagement() {
               ))}
 
               {activeDropdown === 'city' && CITIES_BY_REGION[formData.region]?.map(opt => (
-                <button type="button" key={opt} onClick={() => { setFormData({...formData, city: opt, branch: BRANCHES_BY_CITY[opt]?.[0] || "" }); setActiveDropdown(null); }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
+                <button type="button" key={opt} onClick={() => {
+                  const matching = lotsForBranchSelect(ownerLots, opt);
+                  const firstLot = matching[0];
+                  setFormData({
+                    ...formData,
+                    city: opt,
+                    branch: firstLot?.name || "",
+                    lotId: firstLot ? String(firstLot._id) : "",
+                  });
+                  setActiveDropdown(null);
+                }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
                   {opt} {formData.city === opt && <Check className="h-4 w-4 text-emerald-500" />}
                 </button>
               ))}
 
               {activeDropdown === 'branch' && (
-                BRANCHES_BY_CITY[formData.city]?.length > 0 ? (
-                  BRANCHES_BY_CITY[formData.city].map(opt => (
-                    <button type="button" key={opt} onClick={() => { setFormData({...formData, branch: opt}); setActiveDropdown(null); }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
-                      {opt} {formData.branch === opt && <Check className="h-4 w-4 text-emerald-500" />}
+                lotsForBranchSelect(ownerLots, formData.city).length > 0 ? (
+                  lotsForBranchSelect(ownerLots, formData.city).map((lot) => (
+                    <button type="button" key={String(lot._id)} onClick={() => {
+                      setFormData({
+                        ...formData,
+                        branch: lot.name,
+                        lotId: String(lot._id),
+                      });
+                      setActiveDropdown(null);
+                    }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
+                      {lot.name} {formData.lotId === String(lot._id) && <Check className="h-4 w-4 text-emerald-500" />}
                     </button>
                   ))
                 ) : (
-                  <div className="p-4 text-sm text-zinc-500 text-center">No branches configured for this city.</div>
+                  <div className="p-4 text-sm text-zinc-500 text-center">No parking lots found for your account.</div>
                 )
               )}
             </div>
