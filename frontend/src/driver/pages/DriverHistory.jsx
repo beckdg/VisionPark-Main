@@ -66,7 +66,7 @@ export default function DriverHistory() {
       setErrorMessage("");
       try {
         const response = await apiClient.get("/sessions/my");
-        const sessions = Array.isArray(response?.data) ? response.data : [];
+        const sessions = Array.isArray(response) ? response : [];
         if (!cancelled) setHistory(sessions.map(mapSessionToUI));
       } catch (error) {
         if (!cancelled) {
