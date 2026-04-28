@@ -17,6 +17,7 @@ const parkingSpotSchema = new mongoose.Schema(
       ref: "ParkingZone",
     },
     spotCode: { type: String, required: true, trim: true },
+    paymentRate: { type: Number, required: true, min: 0 },
     isBlocked: { type: Boolean, default: false, index: true },
     allowedCategories: { type: [String], default: [] },
     status: {

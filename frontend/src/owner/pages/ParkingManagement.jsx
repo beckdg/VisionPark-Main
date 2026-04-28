@@ -50,6 +50,7 @@ const toUiZone = (zone) => ({
   _id: String(zone?._id || zone?.id || ""),
   name: String(zone?.name || ""),
   allowedCategories: Array.isArray(zone?.allowedCategories) ? zone.allowedCategories : [],
+  paymentRate: Number(zone?.paymentRate ?? 0),
   spots: [],
 });
 const toUiBranch = (lot) => ({
@@ -200,7 +201,7 @@ export default function ParkingManagement() {
 
   // Forms State
   const [newBranch, setNewBranch] = useState({ name: "", region: "Addis Ababa", city: "Addis Ababa", address: "", latitude: "", longitude: "", serviceType: "Day Service Only", openTime: "06:00 AM", closeTime: "06:00 PM", overstayMultiplier: "1.75" });
-  const [newZone, setNewZone] = useState({ name: "", allowedCategories: [] });
+  const [newZone, setNewZone] = useState({ name: "", allowedCategories: [], paymentRate: "" });
   const [newSpot, setNewSpot] = useState({ id: "", status: "Free", allowedCategories: [] });
   const [isSubmittingZone, setIsSubmittingZone] = useState(false);
   const [isSubmittingSpot, setIsSubmittingSpot] = useState(false);
@@ -332,22 +333,35 @@ export default function ParkingManagement() {
       setCustomAlert({ type: "error", title: "Invalid Lot", message: "Selected lotId is invalid." });
       return;
     }
+    const parsedPaymentRate = Number(newZone.paymentRate);
+    if (!newZone.paymentRate || Number.isNaN(parsedPaymentRate) || parsedPaymentRate <= 0) {
+      setCustomAlert({ type: "error", title: "Invalid Payment Rate", message: "Payment rate must be greater than 0 ETB/hour." });
+      return;
+    }
 
     setIsSubmittingZone(true);
     try {
       const payload = {
         lotId: activeBranch.lotId || activeBranch.id,
         name: newZone.name,
+        paymentRate: parsedPaymentRate,
       };
       if (newZone.allowedCategories.length > 0) payload.allowedCategories = newZone.allowedCategories;
       const created = await apiClient.post("/parking/zones", payload);
       const createdId = String(created?._id || "");
-      const createdZone = { id: createdId, _id: createdId, name: created?.name || newZone.name, allowedCategories: Array.isArray(created?.allowedCategories) ? created.allowedCategories : newZone.allowedCategories, spots: [] };
+      const createdZone = {
+        id: createdId,
+        _id: createdId,
+        name: created?.name || newZone.name,
+        allowedCategories: Array.isArray(created?.allowedCategories) ? created.allowedCategories : newZone.allowedCategories,
+        paymentRate: Number(created?.paymentRate ?? parsedPaymentRate),
+        spots: [],
+      };
       const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? { ...b, zones: [...b.zones, createdZone] } : b));
       setBranches(updatedBranches);
       setSelectedZoneId(createdZone.id);
       setZoneModalOpen(false);
-      setNewZone({ name: "", allowedCategories: [] });
+      setNewZone({ name: "", allowedCategories: [], paymentRate: "" });
       setCustomAlert({ type: "success", title: "Zone Created", message: `Zone "${createdZone.name}" created successfully.` });
     } catch (error) {
       setCustomAlert({ type: "error", title: "Create Zone Failed", message: error?.message || "Failed to create zone." });
@@ -1021,8 +1035,9 @@ export default function ParkingManagement() {
             </div>
             <form onSubmit={handleCreateZone} className="flex flex-col gap-5">
               <div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Zone Name</label><input required type="text" value={newZone.name} onChange={e=>setNewZone({...newZone, name: e.target.value})} className="w-full bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-sm rounded-xl px-4 py-3.5 outline-none focus:border-emerald-500 transition-colors" /></div>
+              <div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Payment Rate (ETB/hour)</label><input required type="number" min="0.01" step="0.01" value={newZone.paymentRate} onChange={e=>setNewZone({...newZone, paymentRate: e.target.value})} className="w-full bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-sm rounded-xl px-4 py-3.5 outline-none focus:border-emerald-500 transition-colors" /></div>
               <DropdownTrigger label={`Allowed Categories (${newZone.allowedCategories.length})`} value={newZone.allowedCategories.length > 0 ? "Multiple Selected" : "Select..."} onClick={() => setActiveDropdown('categories')} />
-              <button type="submit" disabled={newZone.allowedCategories.length === 0 || isSubmittingZone} className="w-full mt-4 bg-emerald-500 text-zinc-950 font-bold py-4 rounded-xl disabled:opacity-50 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-base">Save Zone</button>
+              <button type="submit" disabled={newZone.allowedCategories.length === 0 || !newZone.paymentRate || isSubmittingZone} className="w-full mt-4 bg-emerald-500 text-zinc-950 font-bold py-4 rounded-xl disabled:opacity-50 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-base">Save Zone</button>
             </form>
           </div>
         </div>

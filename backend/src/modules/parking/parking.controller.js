@@ -94,6 +94,7 @@ const createZone = async (req, res, next) => {
       name: req.body.name,
       category: req.body.category,
       allowedCategories: req.body.allowedCategories,
+      paymentRate: req.body.paymentRate,
       isActive: req.body.isActive,
     });
     return res.status(201).json(zone);

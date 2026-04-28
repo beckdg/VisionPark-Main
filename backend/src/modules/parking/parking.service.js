@@ -120,6 +120,10 @@ class ParkingService {
     if (!lotId || !name) {
       throw new ValidationError("lotId and name are required.");
     }
+    const paymentRate = Number(payload?.paymentRate);
+    if (payload?.paymentRate === undefined || Number.isNaN(paymentRate) || paymentRate < 0) {
+      throw new ValidationError("paymentRate is required and must be a non-negative number.");
+    }
     const allowedCategories = Array.isArray(payload?.allowedCategories)
       ? payload.allowedCategories.filter((item) => typeof item === "string" && item.trim())
       : category
@@ -130,6 +134,7 @@ class ParkingService {
       name,
       category,
       allowedCategories,
+      paymentRate,
       isActive: payload?.isActive !== false,
     });
   }
@@ -185,6 +190,14 @@ class ParkingService {
       : category
         ? [String(category).trim()]
         : [];
+    const zone = await ParkingZone.findById(zoneId).select("paymentRate");
+    if (!zone) {
+      throw new NotFoundError("Zone not found.");
+    }
+    const zonePaymentRate = Number(zone.paymentRate);
+    if (Number.isNaN(zonePaymentRate) || zonePaymentRate < 0) {
+      throw new ValidationError("Zone paymentRate is invalid. Update zone configuration first.");
+    }
 
     let spot;
     try {
@@ -192,6 +205,7 @@ class ParkingService {
         lotId,
         zoneId,
         spotCode,
+        paymentRate: zonePaymentRate,
         allowedCategories,
         status: "free",
         derivationVersion: 0,
