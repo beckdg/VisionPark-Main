@@ -50,6 +50,47 @@ class ParkingService {
     });
   }
 
+  async updateLot({ role, userId, lotId, payload }) {
+    const lot = await ParkingLot.findById(lotId);
+    if (!lot) throw new NotFoundError("Lot not found.");
+    if (role === "owner" && String(lot.ownerId) !== String(userId)) {
+      throw new ParkingError("You may only update your own lots.", 403);
+    }
+    if (role !== "owner" && role !== "admin") {
+      throw new ParkingError("Only owners and admins can update lots.", 403);
+    }
+
+    const patch = {};
+    if (payload?.name !== undefined) patch.name = payload.name;
+    if (payload?.region !== undefined) patch.region = payload.region;
+    if (payload?.city !== undefined) patch.city = payload.city;
+    if (payload?.address !== undefined) patch.address = payload.address;
+    if (payload?.location !== undefined) patch.location = payload.location;
+    if (payload?.overstayMultiplier !== undefined) patch.overstayMultiplier = payload.overstayMultiplier;
+    if (payload?.status !== undefined) patch.status = payload.status;
+    if (payload?.isActive !== undefined) patch.status = payload.isActive === false ? "inactive" : "active";
+
+    Object.assign(lot, patch);
+    await lot.save();
+    return lot;
+  }
+
+  async deleteLot({ role, userId, lotId }) {
+    const lot = await ParkingLot.findById(lotId);
+    if (!lot) throw new NotFoundError("Lot not found.");
+    if (role === "owner" && String(lot.ownerId) !== String(userId)) {
+      throw new ParkingError("You may only delete your own lots.", 403);
+    }
+    if (role !== "owner" && role !== "admin") {
+      throw new ParkingError("Only owners and admins can delete lots.", 403);
+    }
+
+    await ParkingSpot.deleteMany({ lotId: lot._id });
+    await ParkingZone.deleteMany({ lotId: lot._id });
+    await ParkingLot.deleteOne({ _id: lot._id });
+    return { deleted: true };
+  }
+
   async listZones({ role, userId, lotId }) {
     if (!lotId) {
       throw new ValidationError("lotId is required.");
@@ -85,6 +126,45 @@ class ParkingService {
       allowedCategories,
       isActive: payload?.isActive !== false,
     });
+  }
+
+  async updateZone({ role, userId, zoneId, payload }) {
+    const zone = await ParkingZone.findById(zoneId);
+    if (!zone) throw new NotFoundError("Zone not found.");
+    const lot = await ParkingLot.findById(zone.lotId).select("ownerId");
+    if (!lot) throw new NotFoundError("Lot not found.");
+    if (role === "owner" && String(lot.ownerId) !== String(userId)) {
+      throw new ParkingError("You may only update zones in your own lots.", 403);
+    }
+    if (role !== "owner" && role !== "admin") {
+      throw new ParkingError("Only owners and admins can update zones.", 403);
+    }
+
+    const patch = {};
+    if (payload?.name !== undefined) patch.name = payload.name;
+    if (payload?.allowedCategories !== undefined) patch.allowedCategories = payload.allowedCategories;
+    if (payload?.isActive !== undefined) patch.isActive = payload.isActive;
+
+    Object.assign(zone, patch);
+    await zone.save();
+    return zone;
+  }
+
+  async deleteZone({ role, userId, zoneId }) {
+    const zone = await ParkingZone.findById(zoneId);
+    if (!zone) throw new NotFoundError("Zone not found.");
+    const lot = await ParkingLot.findById(zone.lotId).select("ownerId");
+    if (!lot) throw new NotFoundError("Lot not found.");
+    if (role === "owner" && String(lot.ownerId) !== String(userId)) {
+      throw new ParkingError("You may only delete zones in your own lots.", 403);
+    }
+    if (role !== "owner" && role !== "admin") {
+      throw new ParkingError("Only owners and admins can delete zones.", 403);
+    }
+
+    await ParkingSpot.deleteMany({ zoneId: zone._id });
+    await ParkingZone.deleteOne({ _id: zone._id });
+    return { deleted: true };
   }
 
   async createSpot(payload) {
@@ -139,6 +219,52 @@ class ParkingService {
     }
 
     return ParkingSpot.find({ zoneId }).sort({ spotCode: 1 }).lean();
+  }
+
+  async updateSpot({ role, userId, spotId, payload }) {
+    const spot = await ParkingSpot.findById(spotId);
+    if (!spot) throw new NotFoundError("Spot not found.");
+    const lot = await ParkingLot.findById(spot.lotId).select("ownerId");
+    if (!lot) throw new NotFoundError("Lot not found.");
+    if (role === "owner" && String(lot.ownerId) !== String(userId)) {
+      throw new ParkingError("You may only update spots in your own lots.", 403);
+    }
+    if (role !== "owner" && role !== "admin") {
+      throw new ParkingError("Only owners and admins can update spots.", 403);
+    }
+
+    if (payload?.spotCode !== undefined) spot.spotCode = payload.spotCode;
+    if (payload?.allowedCategories !== undefined) {
+      spot.allowedCategories = Array.isArray(payload.allowedCategories)
+        ? payload.allowedCategories.filter((item) => typeof item === "string" && item.trim())
+        : [];
+    }
+
+    try {
+      await spot.save();
+    } catch (error) {
+      if (error && error.code === 11000) {
+        throw new ConflictError("A spot with this code already exists in this zone.");
+      }
+      throw error;
+    }
+    return spot;
+  }
+
+  async deleteSpot({ role, userId, spotId }) {
+    const spot = await ParkingSpot.findById(spotId);
+    if (!spot) throw new NotFoundError("Spot not found.");
+    const lot = await ParkingLot.findById(spot.lotId).select("ownerId");
+    if (!lot) throw new NotFoundError("Lot not found.");
+    if (role === "owner" && String(lot.ownerId) !== String(userId)) {
+      throw new ParkingError("You may only delete spots in your own lots.", 403);
+    }
+    if (role !== "owner" && role !== "admin") {
+      throw new ParkingError("Only owners and admins can delete spots.", 403);
+    }
+
+    await ParkingSpot.deleteOne({ _id: spot._id });
+    return { deleted: true };
   }
 
   async setSpotBlocked(spotId, isBlocked) {

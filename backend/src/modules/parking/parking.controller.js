@@ -60,6 +60,33 @@ const createLot = async (req, res, next) => {
   }
 };
 
+const updateLot = async (req, res, next) => {
+  try {
+    const lot = await parkingService.updateLot({
+      role: req.user.role,
+      userId: req.user.userId,
+      lotId: req.params.lotId,
+      payload: req.body,
+    });
+    return res.status(200).json(lot);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const deleteLot = async (req, res, next) => {
+  try {
+    const result = await parkingService.deleteLot({
+      role: req.user.role,
+      userId: req.user.userId,
+      lotId: req.params.lotId,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 const createZone = async (req, res, next) => {
   try {
     const zone = await parkingService.createZone({
@@ -70,6 +97,33 @@ const createZone = async (req, res, next) => {
       isActive: req.body.isActive,
     });
     return res.status(201).json(zone);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const updateZone = async (req, res, next) => {
+  try {
+    const zone = await parkingService.updateZone({
+      role: req.user.role,
+      userId: req.user.userId,
+      zoneId: req.params.zoneId,
+      payload: req.body,
+    });
+    return res.status(200).json(zone);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const deleteZone = async (req, res, next) => {
+  try {
+    const result = await parkingService.deleteZone({
+      role: req.user.role,
+      userId: req.user.userId,
+      zoneId: req.params.zoneId,
+    });
+    return res.status(200).json(result);
   } catch (error) {
     return next(error);
   }
@@ -86,6 +140,33 @@ const createSpot = async (req, res, next) => {
       allowedCategories: req.body.allowedCategories,
     });
     return res.status(201).json(spot);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const updateSpot = async (req, res, next) => {
+  try {
+    const spot = await parkingService.updateSpot({
+      role: req.user.role,
+      userId: req.user.userId,
+      spotId: req.params.spotId,
+      payload: req.body,
+    });
+    return res.status(200).json(spot);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const deleteSpot = async (req, res, next) => {
+  try {
+    const result = await parkingService.deleteSpot({
+      role: req.user.role,
+      userId: req.user.userId,
+      spotId: req.params.spotId,
+    });
+    return res.status(200).json(result);
   } catch (error) {
     return next(error);
   }
@@ -126,8 +207,14 @@ module.exports = {
   listZones,
   listSpots,
   createLot,
+  updateLot,
+  deleteLot,
   createZone,
+  updateZone,
+  deleteZone,
   createSpot,
+  updateSpot,
+  deleteSpot,
   setSpotBlocked,
   getSpotById,
   deriveSpotStatus,

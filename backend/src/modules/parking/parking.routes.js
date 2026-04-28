@@ -19,6 +19,18 @@ router.post(
   requireLotMutationScope,
   controller.createLot
 );
+router.patch(
+  "/lots/:lotId",
+  authenticate,
+  authorize("owner", "admin"),
+  controller.updateLot
+);
+router.delete(
+  "/lots/:lotId",
+  authenticate,
+  authorize("owner", "admin"),
+  controller.deleteLot
+);
 router.post(
   "/zones",
   authenticate,
@@ -26,12 +38,36 @@ router.post(
   requireZoneSpotLotOwnedByUser,
   controller.createZone
 );
+router.patch(
+  "/zones/:zoneId",
+  authenticate,
+  authorize("owner", "admin"),
+  controller.updateZone
+);
+router.delete(
+  "/zones/:zoneId",
+  authenticate,
+  authorize("owner", "admin"),
+  controller.deleteZone
+);
 router.post(
   "/spots",
   authenticate,
   authorize("owner", "admin"),
   requireZoneSpotLotOwnedByUser,
   controller.createSpot
+);
+router.patch(
+  "/spots/:spotId",
+  authenticate,
+  authorize("owner", "admin"),
+  controller.updateSpot
+);
+router.delete(
+  "/spots/:spotId",
+  authenticate,
+  authorize("owner", "admin"),
+  controller.deleteSpot
 );
 router.get("/spots/:spotId", authenticate, controller.getSpotById);
 router.patch(
