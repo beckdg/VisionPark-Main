@@ -4,6 +4,7 @@ const {
   authenticate,
   authorize,
   requireBodyDriverIdMatchesAuthUser,
+  requireSecureSessionAccess,
   requireCloseSessionAccess,
   requireSessionReadAccess,
 } = require("../auth/auth.middleware");
@@ -20,7 +21,7 @@ router.post(
 router.post(
   "/:sessionId/secure",
   authenticate,
-  authorize("attendant", "admin"),
+  requireSecureSessionAccess,
   controller.secureSession
 );
 router.post(

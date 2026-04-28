@@ -225,7 +225,10 @@ class SessionService {
         ? { state: { $in: ["reserved", "secured"] } }
         : { driverId: userId, state: { $in: ["reserved", "secured"] } };
 
-    const session = await ParkingSession.findOne(query).sort({ updatedAt: -1, _id: -1 });
+    const session = await ParkingSession.findOne(query)
+      .sort({ updatedAt: -1, _id: -1 })
+      .populate({ path: "spotId", select: "spotCode" })
+      .populate({ path: "lotId", select: "name location" });
     if (!session) {
       throw new NotFoundError("No active session found.");
     }

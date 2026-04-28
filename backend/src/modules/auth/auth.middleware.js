@@ -108,6 +108,30 @@ const requireCloseSessionAccess = async (req, res, next) => {
   }
 };
 
+const requireSecureSessionAccess = async (req, res, next) => {
+  try {
+    if (!req.user) {
+      return next(new UnauthorizedError("Authentication required."));
+    }
+    if (["admin", "attendant"].includes(req.user.role)) {
+      return next();
+    }
+    if (req.user.role !== "driver") {
+      return next(new ForbiddenError("Only a driver, attendant, or admin may secure a session."));
+    }
+    const session = await ParkingSession.findById(req.params.sessionId).select("driverId state");
+    if (!session) {
+      return next(new NotFoundError("Session not found."));
+    }
+    if (String(session.driverId) !== String(req.user.userId)) {
+      return next(new ForbiddenError("You can only secure your own sessions."));
+    }
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+};
+
 const requireSessionReadAccess = async (req, res, next) => {
   try {
     if (!req.user) {
@@ -238,6 +262,7 @@ module.exports = {
   authorize,
   requireAiApiKey,
   requireBodyDriverIdMatchesAuthUser,
+  requireSecureSessionAccess,
   requireCloseSessionAccess,
   requireSessionReadAccess,
   requireLotMutationScope,

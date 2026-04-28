@@ -20,6 +20,9 @@ export default function ActiveSession() {
   const driverPayment = navState.paymentMethod || "Telebirr";
 
   const [pendingMapRoute, setPendingMapRoute] = useState(null);
+  const [actionError, setActionError] = useState("");
+  const [isSimulatingArrival, setIsSimulatingArrival] = useState(false);
+  const [isSimulatingExit, setIsSimulatingExit] = useState(false);
 
   // Track which notifications have already been sent to prevent spamming
   const notifiedMilestones = useRef(new Set());
@@ -57,9 +60,28 @@ export default function ActiveSession() {
         if (cancelled) return;
         setSession(active);
         setSessionState(String(active?.state || "Discovery").replace(/^./, (c) => c.toUpperCase()));
+        setSpotData((prev) => ({
+          ...prev,
+          id: String(active?.spotId?.spotCode || prev.id || "--"),
+          floor: prev.floor || "Ground",
+          deposit: prev.deposit || 100,
+        }));
+        setAreaData((prev) => ({
+          ...prev,
+          name: active?.lotId?.name || prev.name || "--",
+          lat:
+            active?.lotId?.location?.coordinates?.[1] != null
+              ? active.lotId.location.coordinates[1]
+              : prev.lat,
+          lon:
+            active?.lotId?.location?.coordinates?.[0] != null
+              ? active.lotId.location.coordinates[0]
+              : prev.lon,
+        }));
 
         try {
-          const spot = await apiClient.get(`/parking/spots/${active.spotId}`);
+          const resolvedSpotId = typeof active?.spotId === "object" ? active?.spotId?._id : active?.spotId;
+          const spot = resolvedSpotId ? await apiClient.get(`/parking/spots/${resolvedSpotId}`) : null;
           if (!cancelled && spot) {
             setSpotData((prev) => ({
               ...prev,
@@ -167,35 +189,40 @@ export default function ActiveSession() {
   }, [sessionState]);
 
   // --- DEV TRIGGERS ---
+  const refreshCurrentSession = async (sessionId) => {
+    if (!sessionId) return null;
+    const next = await apiClient.get(`/sessions/${sessionId}`);
+    setSession(next);
+    setSessionState(String(next?.state || "Discovery").replace(/^./, (c) => c.toUpperCase()));
+    return next;
+  };
+
   const handleSimulateArrival = async () => {
-    if (!session?._id) return;
+    if (!session?._id || String(session?.state || "").toLowerCase() !== "reserved" || isSimulatingArrival) return;
+    setActionError("");
+    setIsSimulatingArrival(true);
     try {
-      const next = await apiClient.post(`/sessions/${session._id}/secure`, {});
-      setSession(next);
-      setSessionState("Secured");
+      await apiClient.post(`/sessions/${session._id}/secure`, {});
+      await refreshCurrentSession(session._id);
     } catch (error) {
-      // keep UI stable
+      setActionError(error?.message || "Failed to secure session.");
+    } finally {
+      setIsSimulatingArrival(false);
     }
   };
 
   const handleSystemTriggeredExit = async () => {
-    if (!session?._id) return;
+    if (!session?._id || String(session?.state || "").toLowerCase() !== "secured" || isSimulatingExit) return;
+    setActionError("");
+    setIsSimulatingExit(true);
     try {
-      const next = await apiClient.post(`/sessions/${session._id}/close`, {});
-      const now = Date.now();
-      const exitTime = next?.closedAt
-        ? new Date(next.closedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        : new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const ts = new Date().toLocaleString();
-      const start = next?.securedAt ? new Date(next.securedAt).getTime() : now;
-      const finalSecs = Math.max(0, Math.floor((now - start) / 1000));
-      setSession(next);
-      setReceiptTimestamp(ts);
-      setExitTimeStr(exitTime);
-      setParkedSeconds(finalSecs);
-      setSessionState("SystemReceipt");
+      await apiClient.post(`/sessions/${session._id}/close`, {});
+      localStorage.removeItem("activeSessionId");
+      navigate("/driver/history");
     } catch (error) {
-      // keep UI stable
+      setActionError(error?.message || "Failed to close session.");
+    } finally {
+      setIsSimulatingExit(false);
     }
   };
 
@@ -227,7 +254,7 @@ export default function ActiveSession() {
 
   const confirmOpenGoogleMaps = () => {
     if (pendingMapRoute) {
-      const deepLink = `https://www.google.com/maps/dir/?api=1&origin=$$$${DRIVER_LOC[0]},${DRIVER_LOC[1]}&destination=${pendingMapRoute.lat},${pendingMapRoute.lon}&travelmode=driving`;
+      const deepLink = `https://www.google.com/maps/dir/?api=1&origin=${DRIVER_LOC[0]},${DRIVER_LOC[1]}&destination=${pendingMapRoute.lat},${pendingMapRoute.lon}&travelmode=driving`;
       window.open(deepLink, "_blank", "noopener,noreferrer");
       setPendingMapRoute(null);
     }
@@ -262,6 +289,11 @@ export default function ActiveSession() {
     <div className="custom-scrollbar relative h-full w-full overflow-y-auto bg-[#f4f4f5] dark:bg-[#09090b] pt-24 px-4 md:px-8 flex flex-col items-center overscroll-none transition-colors duration-500">
 
       <div className="relative z-10 w-full max-w-md md:max-w-3xl lg:max-w-4xl mx-auto flex flex-col gap-6 lg:gap-8">
+        {actionError ? (
+          <div className="w-full bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40 text-red-700 dark:text-red-300 rounded-xl p-3 text-sm font-medium">
+            {actionError}
+          </div>
+        ) : null}
 
         {/* --- 1. RESERVED STATE --- */}
         {sessionState === "Reserved" && (
@@ -300,8 +332,8 @@ export default function ActiveSession() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-3 md:gap-4 w-full">
-                  <button type="button" onClick={handleSimulateArrival} className="w-full sm:flex-[1] h-14 lg:h-16 flex items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-white/5 text-zinc-500 dark:text-zinc-400 font-bold text-xs lg:text-sm tracking-wide uppercase hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors outline-none cursor-pointer">
-                    [Simulate Arrival]
+                  <button type="button" onClick={handleSimulateArrival} disabled={isSimulatingArrival} className="w-full sm:flex-[1] h-14 lg:h-16 flex items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-white/5 text-zinc-500 dark:text-zinc-400 font-bold text-xs lg:text-sm tracking-wide uppercase hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
+                    {isSimulatingArrival ? "Securing..." : "Simulate Arrival"}
                   </button>
 
                   <button type="button" onClick={handleNavigateClick} className="w-full sm:flex-[2] h-14 lg:h-16 flex items-center justify-center gap-2 rounded-xl bg-emerald-500 text-zinc-950 font-bold text-sm lg:text-base tracking-wide shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:bg-emerald-400 transition-colors outline-none cursor-pointer">
@@ -353,8 +385,8 @@ export default function ActiveSession() {
               </div>
             </div>
 
-            <button type="button" onClick={handleSystemTriggeredExit} className="mt-8 w-full h-12 md:h-14 flex items-center justify-center gap-2 rounded-xl border border-dashed border-red-300 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 text-red-500 dark:text-red-400 font-bold text-xs md:text-sm tracking-wide uppercase hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors outline-none cursor-pointer">
-              [Dev: Simulate Camera Exit]
+            <button type="button" onClick={handleSystemTriggeredExit} disabled={isSimulatingExit} className="mt-8 w-full h-12 md:h-14 flex items-center justify-center gap-2 rounded-xl border border-dashed border-red-300 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 text-red-500 dark:text-red-400 font-bold text-xs md:text-sm tracking-wide uppercase hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed">
+              {isSimulatingExit ? "Closing..." : "Simulate Driver Exit"}
             </button>
 
           </div>
