@@ -211,6 +211,26 @@ class SessionService {
     return session;
   }
 
+  async getActiveSessionForUser({ userId, role }) {
+    if (!userId) {
+      throw new ValidationError("userId is required.");
+    }
+    if (role !== "driver" && role !== "admin") {
+      throw new SessionError("Only drivers and admins can query active session.", 403);
+    }
+
+    const query =
+      role === "admin"
+        ? { state: { $in: ["reserved", "secured"] } }
+        : { driverId: userId, state: { $in: ["reserved", "secured"] } };
+
+    const session = await ParkingSession.findOne(query).sort({ updatedAt: -1, _id: -1 });
+    if (!session) {
+      throw new NotFoundError("No active session found.");
+    }
+    return session;
+  }
+
   async #transitionSession({
     sessionId,
     expectedState,

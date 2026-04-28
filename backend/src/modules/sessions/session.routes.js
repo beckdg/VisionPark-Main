@@ -36,6 +36,12 @@ router.post(
   controller.closeSession
 );
 router.get(
+  "/me/active",
+  authenticate,
+  authorize("driver", "admin"),
+  controller.getMyActiveSession
+);
+router.get(
   "/:sessionId",
   authenticate,
   requireSessionReadAccess,

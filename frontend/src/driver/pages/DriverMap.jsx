@@ -275,6 +275,10 @@ export default function DriverMap() {
             status: String(spot?.status || "free").toLowerCase(),
             floor: "Ground",
             deposit: 100,
+            allowedCategories:
+              Array.isArray(spot?.allowedCategories) && spot.allowedCategories.length > 0
+                ? spot.allowedCategories
+                : ["Public Transport Vehicles | Upto 12 Seats"],
             vehicleType:
               Array.isArray(spot?.allowedCategories) && spot.allowedCategories.length > 0
                 ? spot.allowedCategories[0]
@@ -749,7 +753,10 @@ export default function DriverMap() {
 
             <div className="p-5 md:p-6 overflow-y-auto overscroll-contain flex-1 flex flex-col gap-3 custom-scrollbar">
               {selectedArea.spots.map((spot) => {
-                const isCompatible = spot.vehicleType === driverVehicle;
+                const allowed = Array.isArray(spot.allowedCategories) && spot.allowedCategories.length > 0
+                  ? spot.allowedCategories
+                  : [spot.vehicleType];
+                const isCompatible = allowed.includes(driverVehicle);
                 const canSelect = isCompatible && spot.status === "free";
                 return (
                   <div

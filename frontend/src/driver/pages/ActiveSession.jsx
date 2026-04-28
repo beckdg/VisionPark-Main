@@ -47,6 +47,54 @@ export default function ActiveSession() {
 
   const [exitTimeStr, setExitTimeStr] = useState(() => initialSession?.closedAt ? new Date(initialSession.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "--:--");
 
+  useEffect(() => {
+    let cancelled = false;
+    if (session) return () => {};
+
+    (async () => {
+      try {
+        const active = await apiClient.get("/sessions/me/active");
+        if (cancelled) return;
+        setSession(active);
+        setSessionState(String(active?.state || "Discovery").replace(/^./, (c) => c.toUpperCase()));
+
+        try {
+          const spot = await apiClient.get(`/parking/spots/${active.spotId}`);
+          if (!cancelled && spot) {
+            setSpotData((prev) => ({
+              ...prev,
+              id: String(spot.spotCode || spot._id || prev.id),
+              floor: prev.floor || "Ground",
+              deposit: prev.deposit || 100,
+            }));
+          }
+          const lots = await apiClient.get("/parking/lots");
+          if (!cancelled && Array.isArray(lots)) {
+            const lot = lots.find((l) => String(l._id) === String(active.lotId));
+            if (lot) {
+              setAreaData((prev) => ({
+                ...prev,
+                name: lot.name || prev.name,
+                lat: lot?.location?.coordinates?.[1] ?? prev.lat,
+                lon: lot?.location?.coordinates?.[0] ?? prev.lon,
+              }));
+            }
+          }
+        } catch {
+          // keep current fallback values
+        }
+      } catch {
+        if (!cancelled) {
+          setSessionState("Discovery");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
   // --- NATIVE OS NOTIFICATION HELPER ---
   const sendOSNotification = (title, body) => {
     if (!("Notification" in window)) return;
