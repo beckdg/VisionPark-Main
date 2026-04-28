@@ -459,20 +459,6 @@ export default function ParkingManagement() {
 
     let generated = 0;
     let skipped = 0;
-    const existingIds = new Set(activeZone.spots.map(s => s.id));
-
-    for (let r = 0; r < gridConfig.rows; r++) {
-      const rowStr = getRowLetter(r);
-      for (let c = 1; c <= gridConfig.cols; c++) {
-        const spotId = `${gridConfig.prefix}${gridConfig.prefix ? '-' : ''}${rowStr}${c}`;
-        
-        if (!existingIds.has(spotId)) {
-          existingIds.add(spotId);
-        } else {
-          skipped++;
-        }
-      }
-    }
     const lotId = activeBranch.lotId || activeBranch.id;
     const zoneId = activeZone._id || activeZone.id;
     if (!isValidObjectId(lotId)) {
@@ -491,7 +477,32 @@ export default function ParkingManagement() {
         candidates.push(`${gridConfig.prefix}${gridConfig.prefix ? "-" : ""}${rowStr}${c}`);
       }
     }
-    const missing = candidates.filter((id) => !activeZone.spots.some((s) => s.id === id));
+    // Re-sync spot codes from backend to avoid duplicate create failures when local state is stale.
+    let existingCodes = new Set(activeZone.spots.map((s) => s.id));
+    try {
+      const latestSpots = await apiClient.get(`/parking/spots?zoneId=${zoneId}`);
+      if (Array.isArray(latestSpots)) {
+        existingCodes = new Set(latestSpots.map((s) => String(s.spotCode || s.id || "")));
+        const merged = latestSpots.map(toUiSpot);
+        setBranches((prev) =>
+          prev.map((b) =>
+            b.id === activeBranch.id
+              ? {
+                  ...b,
+                  zones: b.zones.map((z) =>
+                    z.id === activeZone.id ? { ...z, spots: merged } : z
+                  ),
+                }
+              : b
+          )
+        );
+      }
+    } catch {
+      // If list endpoint fails, continue with current UI state.
+    }
+
+    const missing = candidates.filter((id) => !existingCodes.has(id));
+    skipped += candidates.length - missing.length;
     const createdSpots = [];
     setIsSubmittingGrid(true);
     try {

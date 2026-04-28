@@ -157,13 +157,11 @@ const requireLotMutationScope = async (req, res, next) => {
     if (req.user.role !== "owner") {
       return next(new ForbiddenError("Only an owner or admin may manage inventory."));
     }
-    const ownerId = req.body?.ownerId;
-    if (!ownerId) {
-      return next(new ValidationError("ownerId is required."));
-    }
+    const ownerId = req.body?.ownerId || req.user.userId;
     if (String(ownerId) !== String(req.user.userId)) {
       return next(new ForbiddenError("ownerId must match your account."));
     }
+    req.body.ownerId = String(req.user.userId);
     return next();
   } catch (error) {
     return next(error);

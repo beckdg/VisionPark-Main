@@ -100,14 +100,22 @@ class ParkingService {
         ? [String(category).trim()]
         : [];
 
-    const spot = await ParkingSpot.create({
-      lotId,
-      zoneId,
-      spotCode,
-      allowedCategories,
-      status: "free",
-      derivationVersion: 0,
-    });
+    let spot;
+    try {
+      spot = await ParkingSpot.create({
+        lotId,
+        zoneId,
+        spotCode,
+        allowedCategories,
+        status: "free",
+        derivationVersion: 0,
+      });
+    } catch (error) {
+      if (error && error.code === 11000) {
+        throw new ConflictError("A spot with this code already exists in this zone.");
+      }
+      throw error;
+    }
 
     return this.updateSpotStatus(spot._id);
   }

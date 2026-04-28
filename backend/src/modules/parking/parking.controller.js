@@ -42,8 +42,9 @@ const listSpots = async (req, res, next) => {
 
 const createLot = async (req, res, next) => {
   try {
+    const ownerIdFromToken = req.user?.role === "owner" ? req.user.userId : req.body.ownerId;
     const lot = await parkingService.createLot({
-      ownerId: req.body.ownerId,
+      ownerId: ownerIdFromToken,
       name: req.body.name,
       region: req.body.region,
       city: req.body.city,

@@ -70,6 +70,35 @@ parkingSpotSchema.set("toObject", { virtuals: true });
 
 const ParkingSpot = mongoose.model("ParkingSpot", parkingSpotSchema);
 
+const ensureParkingSpotIndex = async () => {
+  try {
+    const indexes = await ParkingSpot.collection.indexes();
+    const uniqueIndex = indexes.find((idx) => idx.name === "uniq_spot_code_within_zone");
+    if (!uniqueIndex) return;
+
+    // Repair legacy index shape `{ lotId, zoneId, code }` that causes dup-key null failures.
+    const hasLegacyCodeKey = Boolean(uniqueIndex.key?.code === 1);
+    const hasSpotCodeKey = Boolean(uniqueIndex.key?.spotCode === 1);
+    if (hasLegacyCodeKey && !hasSpotCodeKey) {
+      await ParkingSpot.collection.dropIndex("uniq_spot_code_within_zone");
+      await ParkingSpot.collection.createIndex(
+        { lotId: 1, zoneId: 1, spotCode: 1 },
+        { unique: true, name: "uniq_spot_code_within_zone" }
+      );
+    }
+  } catch (error) {
+    // Non-fatal; app should still boot even if index repair fails.
+    // eslint-disable-next-line no-console
+    console.warn("Parking spot index repair skipped:", error?.message || error);
+  }
+};
+
+if (mongoose.connection.readyState === 1) {
+  ensureParkingSpotIndex();
+} else {
+  mongoose.connection.once("open", ensureParkingSpotIndex);
+}
+
 module.exports = {
   ParkingSpot,
   SPOT_STATES,
