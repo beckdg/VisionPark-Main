@@ -3,6 +3,9 @@ const { User } = require("../users/models/user.model");
 const { NotFoundError, ValidationError, ConflictError } = require("../../common/errors");
 
 const isPlateType = (type) => type === "UNREADABLE_PLATE" || type === "EXIT_MISMATCH";
+const PENDING_STATUSES = ["PENDING", "pending"];
+const RESOLVED_STATUSES = ["RESOLVED", "resolved"];
+const DISMISSED_STATUSES = ["DISMISSED", "dismissed"];
 
 const toRelativeTime = (dateLike) => {
   const d = new Date(dateLike);
@@ -49,7 +52,12 @@ class AttendantAIExceptionsService {
       aiGuess,
       issue: doc?.display?.issueText || doc?.ai?.rawReason || "AI anomaly detected.",
       image: doc?.evidence?.imageUrl || null,
-      status: doc.status === "PENDING" ? "Pending" : doc.status === "RESOLVED" ? "Resolved" : "Dismissed",
+      status:
+        String(doc.status).toUpperCase() === "PENDING"
+          ? "Pending"
+          : String(doc.status).toUpperCase() === "RESOLVED"
+            ? "Resolved"
+            : "Dismissed",
       createdAt: doc.createdAt,
       resolution: doc?.resolution || null,
     };
@@ -60,12 +68,12 @@ class AttendantAIExceptionsService {
     const requestedStatus = String(query?.status || "pending").toUpperCase();
     const mappedStatus =
       requestedStatus === "RESOLVED"
-        ? "RESOLVED"
+        ? RESOLVED_STATUSES
         : requestedStatus === "DISMISSED"
-          ? "DISMISSED"
-          : "PENDING";
+          ? DISMISSED_STATUSES
+          : PENDING_STATUSES;
 
-    const dbQuery = { lotId, status: mappedStatus };
+    const dbQuery = { lotId, status: { $in: mappedStatus } };
     const search = String(query?.search || "").trim();
     if (search) {
       dbQuery.$or = [
@@ -95,7 +103,7 @@ class AttendantAIExceptionsService {
       $or: [{ _id: exceptionId }, { exceptionCode: exceptionId }],
     });
     if (!doc) throw new NotFoundError("AI exception not found.");
-    if (doc.status !== "PENDING") {
+    if (!PENDING_STATUSES.includes(String(doc.status))) {
       throw new ConflictError("Only pending exceptions can be resolved.");
     }
 
@@ -129,9 +137,9 @@ class AttendantAIExceptionsService {
   async getStatsForAttendant({ userId }) {
     const { lotId } = await this.#getAttendantScope(userId);
     const [pending, resolved, dismissed] = await Promise.all([
-      AIException.countDocuments({ lotId, status: "PENDING" }),
-      AIException.countDocuments({ lotId, status: "RESOLVED" }),
-      AIException.countDocuments({ lotId, status: "DISMISSED" }),
+      AIException.countDocuments({ lotId, status: { $in: PENDING_STATUSES } }),
+      AIException.countDocuments({ lotId, status: { $in: RESOLVED_STATUSES } }),
+      AIException.countDocuments({ lotId, status: { $in: DISMISSED_STATUSES } }),
     ]);
     return {
       pending,
