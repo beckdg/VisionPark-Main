@@ -43,6 +43,12 @@ router.get(
   controller.getMyActiveSession
 );
 router.get(
+  "/me",
+  authenticate,
+  authorize("driver"),
+  controller.getMySessions
+);
+router.get(
   "/my",
   authenticate,
   authorize("driver"),

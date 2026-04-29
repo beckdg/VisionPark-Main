@@ -278,20 +278,29 @@ class SessionService {
         (depositAmount != null || parkingAmount != null
           ? (Number(depositAmount || 0) + Number(parkingAmount || 0))
           : null);
+      const paymentAmount = Number(totalAmount ?? 0);
+      const paymentMethod = tx?.method ?? null;
 
       return {
         _id: s._id,
         spotCode: s?.spotId?.spotCode ?? null,
         branchName: s?.lotId?.name ?? null,
+        lotName: s?.lotId?.name ?? null,
         state: s.state,
         reservedAt: s.reservedAt ?? null,
         parkedAt,
+        startTime: parkedAt,
         exitedAt,
+        endTime: exitedAt,
         durationSeconds,
         depositAmount,
         parkingAmount,
         totalAmount,
-        paymentMethod: tx?.method ?? null,
+        paymentMethod,
+        payment: {
+          amount: paymentAmount,
+          paymentMethod,
+        },
       };
     });
   }

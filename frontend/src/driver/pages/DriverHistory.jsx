@@ -25,24 +25,24 @@ const formatTime = (value) => {
 function mapSessionToUI(session) {
   const durationSeconds = Number(session?.durationSeconds || 0);
   const depositAmount = Number(session?.depositAmount || 0);
-  const parkingAmount = Number(session?.parkingAmount || 0);
+  const paymentAmount = Number(session?.payment?.amount || 0);
   return {
     id: session?._id,
     spotId: session?.spotCode,
-    location: session?.branchName,
+    location: session?.lotName || session?.branchName,
     lat: 0,
     lon: 0,
-    date: formatDate(session?.reservedAt),
-    startTime: formatTime(session?.parkedAt),
-    endTime: session?.exitedAt ? formatTime(session?.exitedAt) : "--:--",
+    date: formatDate(session?.reservedAt || session?.startTime),
+    startTime: formatTime(session?.startTime || session?.parkedAt),
+    endTime: session?.endTime || session?.exitedAt ? formatTime(session?.endTime || session?.exitedAt) : "--:--",
     status: session?.state === "closed" ? "Completed" : "Expired",
     hours: Math.floor(durationSeconds / 3600),
     minutes: Math.floor((durationSeconds % 3600) / 60),
     seconds: durationSeconds % 60,
     deposit: depositAmount,
-    cost: parkingAmount,
-    walletRefund: depositAmount - parkingAmount,
-    paymentMethod: session?.paymentMethod || "N/A",
+    cost: paymentAmount,
+    walletRefund: depositAmount - paymentAmount,
+    paymentMethod: session?.payment?.paymentMethod || session?.paymentMethod || "N/A",
   };
 }
 
@@ -65,7 +65,7 @@ export default function DriverHistory() {
       setLoading(true);
       setErrorMessage("");
       try {
-        const response = await apiClient.get("/sessions/my");
+        const response = await apiClient.get("/sessions/me");
         const sessions = Array.isArray(response) ? response : [];
         if (!cancelled) setHistory(sessions.map(mapSessionToUI));
       } catch (error) {
