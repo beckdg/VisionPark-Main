@@ -18,15 +18,15 @@ const NAVIGATION = [
   { name: "Shift Z-Report", path: "/attendant/z-report", icon: Calculator },
 ];
 
-const MOCK_ATTENDANT = {
-  name: "Kebede Alemu",
+const DEFAULT_ATTENDANT = {
+  name: "Attendant",
   role: "Parking Attendant",
-  avatar: "https://i.pravatar.cc/150?u=kebede",
+  avatar: "https://i.pravatar.cc/150?u=attendant",
   unreadNotifications: 2
 };
 
 // --- SIDEBAR COMPONENT ---
-const SidebarContent = ({ collapsed, currentPath, onNavigate, onHover, onLeave, onLogout }) => (
+const SidebarContent = ({ collapsed, currentPath, onNavigate, onHover, onLeave, onLogout, attendant }) => (
   <div className="flex flex-col h-full bg-white dark:bg-[#121214] w-full">
 
     {/* Brand Header */}
@@ -77,11 +77,11 @@ const SidebarContent = ({ collapsed, currentPath, onNavigate, onHover, onLeave, 
         to="/attendant/profile"
         className={({ isActive }) => `flex items-center ${collapsed ? 'justify-center p-2' : 'gap-3 p-3'} rounded-xl transition-all outline-none ${isActive ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold" : "hover:bg-zinc-50 dark:hover:bg-white/5"}`}
       >
-        <img src={MOCK_ATTENDANT.avatar} alt="Profile" className="h-9 w-9 rounded-full border border-zinc-200 dark:border-white/10 shrink-0 object-cover" />
+        <img src={attendant.avatar} alt="Profile" className="h-9 w-9 rounded-full border border-zinc-200 dark:border-white/10 shrink-0 object-cover" />
         {!collapsed && (
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-bold text-zinc-900 dark:text-white truncate">{MOCK_ATTENDANT.name}</span>
-            <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold uppercase tracking-wider truncate">{MOCK_ATTENDANT.role}</span>
+            <span className="text-sm font-bold text-zinc-900 dark:text-white truncate">{attendant.name}</span>
+            <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold uppercase tracking-wider truncate">{attendant.role}</span>
           </div>
         )}
       </NavLink>
@@ -104,12 +104,18 @@ export default function AttendantLayout() {
   const [hoveredNav, setHoveredNav] = useState(null);
 
   // ✅ Dynamic Notification State
-  const [unreadCount, setUnreadCount] = useState(MOCK_ATTENDANT.unreadNotifications);
+  const [unreadCount, setUnreadCount] = useState(DEFAULT_ATTENDANT.unreadNotifications);
 
   const location = useLocation();
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
   const auth = useAuth();
+  const user = auth?.user;
+  const attendant = {
+    name: user?.name || DEFAULT_ATTENDANT.name,
+    role: user?.role ? `Parking ${String(user.role).charAt(0).toUpperCase()}${String(user.role).slice(1)}` : DEFAULT_ATTENDANT.role,
+    avatar: user?.avatarUrl || DEFAULT_ATTENDANT.avatar,
+  };
 
   useEffect(() => {
     localStorage.setItem("visionpark_attendant_sidebar_collapsed", isSidebarCollapsed);
@@ -167,6 +173,7 @@ export default function AttendantLayout() {
           onHover={handleNavHover}
           onLeave={() => setHoveredNav(null)}
           onLogout={handleLogout}
+          attendant={attendant}
         />
       </aside>
 
@@ -200,6 +207,7 @@ export default function AttendantLayout() {
               onHover={() => { }}
               onLeave={() => { }}
               onLogout={handleLogout}
+              attendant={attendant}
             />
             <button
               onClick={() => setIsMobileMenuOpen(false)}

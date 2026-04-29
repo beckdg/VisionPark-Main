@@ -2,6 +2,7 @@ const { ParkingLot } = require("./models/parking-lot.model");
 const { ParkingZone } = require("./models/parking-zone.model");
 const { ParkingSpot } = require("./models/parking-spot.model");
 const { ParkingSession } = require("../sessions/models/parking-session.model");
+const { User } = require("../users/models/user.model");
 const { domainEventBus, DOMAIN_EVENTS } = require("../operations/shared/domain-events");
 const { AppError, ValidationError, NotFoundError, ConflictError } = require("../../common/errors");
 const { logger } = require("../../common/logger");
@@ -28,7 +29,15 @@ class ParkingService {
     if (role === "driver") {
       return ParkingLot.find({}).sort({ name: 1 }).lean();
     }
-    throw new ParkingError("Only owners, admins, and drivers can list lots.", 403);
+    if (role === "attendant") {
+      const attendantUser = await User.findById(userId).select("attendant.lotId");
+      const assignedLotId = attendantUser?.attendant?.lotId;
+      if (!assignedLotId) {
+        return [];
+      }
+      return ParkingLot.find({ _id: assignedLotId }).sort({ name: 1 }).lean();
+    }
+    throw new ParkingError("Only owners, admins, drivers, and attendants can list lots.", 403);
   }
 
   async createLot(payload) {
