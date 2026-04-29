@@ -3,7 +3,7 @@
  * PURPOSE: Track parking revenue, platform fees, payment methods (Pie Chart), and dynamic revenue trends.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Banknote, Download, Calendar, TrendingUp,
   CreditCard, ChevronDown, Check, X, FileText,
@@ -13,6 +13,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis,
   CartesianGrid, Tooltip, PieChart, Pie, Cell
 } from "recharts";
+import { apiClient } from "../../api/apiClient";
 
 // --- DROPDOWNS DATA ---
 const REGION_GROUPS = [
@@ -39,43 +40,7 @@ const BRANCHES_BY_CITY = {
   "All Cities": ["All Branches"]
 };
 
-// --- MOCK DATA ---
-const SUMMARY_STATS = { totalGross: 145000, netEarnings: 145000 };
-
-const PAYMENT_BREAKDOWN = [
-  { method: "Telebirr", percentage: 45, amount: 65250, color: "#3b82f6" },
-  { method: "CBE", percentage: 25, amount: 36250, color: "#a855f7" },
-  { method: "COOP", percentage: 15, amount: 21750, color: "#f97316" },
-  { method: "Bank of Abyssinia", percentage: 10, amount: 14500, color: "#eab308" },
-  { method: "VisionPark Wallet", percentage: 5, amount: 7250, color: "#10b981" },
-];
-
-// Recharts-ready data for each chart view
-const CHART_DATA = {
-  daily: [
-    { label: "D1", etb: 1640 }, { label: "D2", etb: 2460 }, { label: "D3", etb: 1845 },
-    { label: "D4", etb: 3280 }, { label: "D5", etb: 2665 }, { label: "D6", etb: 3690 },
-    { label: "D7", etb: 4100 },
-  ],
-  weekly: [
-    { label: "Wk 1", etb: 26650 }, { label: "Wk 2", etb: 30750 },
-    { label: "Wk 3", etb: 24600 }, { label: "Wk 4", etb: 38950 },
-  ],
-  monthly: [
-    { label: "Jan", etb: 20500 }, { label: "Feb", etb: 22550 }, { label: "Mar", etb: 24600 },
-    { label: "Apr", etb: 18450 }, { label: "May", etb: 28700 }, { label: "Jun", etb: 34850 },
-    { label: "Jul", etb: 36900 }, { label: "Aug", etb: 32800 }, { label: "Sep", etb: 38950 },
-    { label: "Oct", etb: 41000 }, { label: "Nov", etb: 45100 }, { label: "Dec", etb: 49200 },
-  ],
-};
-
-const TRANSACTIONS = [
-  { id: "TXN-8821A", date: "2026-03-10 14:30", plate: "AA 12345", branch: "Bole Airport", duration: "2h 15m", amount: 120, method: "Telebirr", status: "Completed" },
-  { id: "TXN-8822B", date: "2026-03-10 14:15", plate: "OR 98765", branch: "Adama Bus Terminal", duration: "45m", amount: 40, method: "CBE", status: "Completed" },
-  { id: "TXN-8823C", date: "2026-03-10 13:50", plate: "DR 55521", branch: "Piazza Street", duration: "3h 0m", amount: 150, method: "Wallet", status: "Completed" },
-  { id: "TXN-8824D", date: "2026-03-10 13:20", plate: "AA 11223", branch: "Bole Airport", duration: "1h 30m", amount: 80, method: "Bank of Abyssinia", status: "Completed" },
-  { id: "TXN-8825E", date: "2026-03-10 12:45", plate: "SM 33445", branch: "Adama Bus Terminal", duration: "Ovr: 1h", amount: 105, method: "COOP", status: "Completed" },
-];
+// (Mock data removed: Financial Reports now fetches real data from the backend.)
 
 // ── Moved outside component to prevent re-render flash ───────────────────────
 const DropdownTrigger = ({ label, value, onClick, disabled }) => (
@@ -96,8 +61,123 @@ export default function FinancialReports() {
   const [activeDropdown, setActiveDropdown] = useState(null);
   const [chartView, setChartView] = useState("daily");
 
+  // --- LIVE DATA STATE (replaces mock data) ---
+  const [transactions, setTransactions] = useState([]);
+  const [summaryStats, setSummaryStats] = useState({ totalGross: 0, netEarnings: 0 });
+  const [paymentBreakdown, setPaymentBreakdown] = useState([]);
+  const [chartData, setChartData] = useState({ daily: [], weekly: [], monthly: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
   const formatCurrency = (num) =>
     new Intl.NumberFormat("en-ET", { style: "currency", currency: "ETB", minimumFractionDigits: 0 }).format(num);
+
+  const buildScopeParams = () => {
+    const params = new URLSearchParams();
+    params.set("region", region);
+    params.set("city", city);
+    params.set("branch", branch);
+    params.set("dateRange", dateRange);
+    return params;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchTransactionsAndAggregates = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = buildScopeParams();
+        const data = await apiClient.get(`/transactions?${params.toString()}`);
+        if (cancelled) return;
+
+        const txs = Array.isArray(data) ? data : [];
+
+        const normalizedTxs = txs.map((tx, idx) => ({
+          id: String(tx?.id ?? tx?._id ?? idx),
+          date: tx?.date ?? "--",
+          plate: tx?.plate ?? "--",
+          branch: tx?.branch ?? "--",
+          duration: tx?.duration ?? "--",
+          method: tx?.method ?? "--",
+          status: tx?.status ?? "Pending",
+          amount: Number(tx?.amount ?? 0),
+        }));
+
+        setTransactions(normalizedTxs);
+
+        // Summary cards + payment breakdown are derived from "Completed" transactions.
+        const completed = normalizedTxs.filter((tx) => String(tx?.status).toLowerCase() === "completed");
+        const totalGross = completed.reduce((acc, tx) => acc + Number(tx?.amount ?? 0), 0);
+        setSummaryStats({ totalGross, netEarnings: totalGross });
+
+        const byMethod = new Map(); // method => amount
+        for (const tx of completed) {
+          const method = String(tx?.method ?? "--");
+          byMethod.set(method, (byMethod.get(method) ?? 0) + Number(tx?.amount ?? 0));
+        }
+
+        const total = totalGross;
+        const palette = ["#3b82f6", "#a855f7", "#f97316", "#eab308", "#10b981", "#ef4444", "#06b6d4", "#8b5cf6"];
+        const entries = Array.from(byMethod.entries());
+
+        setPaymentBreakdown(
+          entries.map(([method, amount], i) => ({
+            method,
+            amount,
+            percentage: total > 0 ? Math.round((amount / total) * 100) : 0,
+            color: palette[i % palette.length],
+          }))
+        );
+      } catch (e) {
+        if (cancelled) return;
+        // Fail silently (per requirement) but keep UI stable.
+        console.error("FinancialReports transactions fetch failed:", e);
+        setError(e);
+        setTransactions([]);
+        setSummaryStats({ totalGross: 0, netEarnings: 0 });
+        setPaymentBreakdown([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    fetchTransactionsAndAggregates();
+    return () => {
+      cancelled = true;
+    };
+  }, [region, city, branch, dateRange]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchRevenueTrend = async () => {
+      try {
+        const params = buildScopeParams();
+        params.set("range", chartView);
+        const data = await apiClient.get(`/reports/revenue?${params.toString()}`);
+        if (cancelled) return;
+
+        setChartData((prev) => ({
+          ...prev,
+          [chartView]: Array.isArray(data) ? data : [],
+        }));
+      } catch (e) {
+        if (cancelled) return;
+        console.error("FinancialReports revenue trend fetch failed:", e);
+        setChartData((prev) => ({
+          ...prev,
+          [chartView]: [],
+        }));
+      }
+    };
+
+    fetchRevenueTrend();
+    return () => {
+      cancelled = true;
+    };
+  }, [chartView, region, city, branch, dateRange]);
 
   // ── CUSTOM TOOLTIPS ───────────────────────────────────────────────────────
   // Same dark card base as Dashboard and Analytics.
@@ -177,7 +257,7 @@ export default function FinancialReports() {
             <div className="p-2 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg"><Banknote className="h-5 w-5 text-emerald-500" /></div>
           </div>
           <div className="relative z-10">
-            <span className="text-3xl md:text-4xl font-bold text-zinc-900 dark:text-white">{formatCurrency(SUMMARY_STATS.totalGross)}</span>
+            <span className="text-3xl md:text-4xl font-bold text-zinc-900 dark:text-white">{formatCurrency(summaryStats.totalGross)}</span>
             <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-bold mt-2">
               <ArrowUpRight className="h-3 w-3" /> +12.5% from last period
             </div>
@@ -191,7 +271,7 @@ export default function FinancialReports() {
             <div className="p-2 bg-white/20 rounded-lg"><TrendingUp className="h-5 w-5" /></div>
           </div>
           <div className="relative z-10">
-            <span className="text-3xl md:text-4xl font-black">{formatCurrency(SUMMARY_STATS.netEarnings)}</span>
+            <span className="text-3xl md:text-4xl font-black">{formatCurrency(summaryStats.netEarnings)}</span>
             <div className="flex items-center gap-1 opacity-90 text-xs font-bold mt-2">Ready for Withdrawal</div>
           </div>
         </div>
@@ -216,7 +296,7 @@ export default function FinancialReports() {
 
           <div className="flex-1 min-h-[200px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={CHART_DATA[chartView]} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
+              <AreaChart data={chartData[chartView] || []} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="financeGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
@@ -269,7 +349,7 @@ export default function FinancialReports() {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={PAYMENT_BREAKDOWN}
+                    data={paymentBreakdown}
                     cx="50%"
                     cy="50%"
                     innerRadius="65%"
@@ -280,7 +360,7 @@ export default function FinancialReports() {
                     startAngle={90}
                     endAngle={-270}
                   >
-                    {PAYMENT_BREAKDOWN.map((entry, index) => (
+                    {paymentBreakdown.map((entry, index) => (
                       <Cell key={index} fill={entry.color} />
                     ))}
                   </Pie>
@@ -291,7 +371,7 @@ export default function FinancialReports() {
 
             {/* Legend */}
             <div className="w-full flex flex-col gap-2">
-              {PAYMENT_BREAKDOWN.map((method) => (
+              {paymentBreakdown.map((method) => (
                 <div key={method.method} className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2">
                     <div className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: method.color }} />
@@ -332,29 +412,43 @@ export default function FinancialReports() {
               </tr>
             </thead>
             <tbody className="text-sm">
-              {TRANSACTIONS.map((tx) => (
-                <tr key={tx.id} className="border-b border-zinc-100 dark:border-white/5 last:border-0 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors">
-                  <td className="px-6 py-4 font-mono font-medium text-zinc-600 dark:text-zinc-400">{tx.id}</td>
-                  <td className="px-6 py-4 text-zinc-900 dark:text-white">{tx.date}</td>
-                  <td className="px-6 py-4">
-                    <span className="font-bold text-zinc-900 dark:text-white block">{tx.plate}</span>
-                    <span className="text-xs text-zinc-500">{tx.branch} • {tx.duration}</span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-white/10 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                      {tx.method}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center gap-1">
-                      <Check className="h-3 w-3" /> {tx.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right font-bold text-zinc-900 dark:text-white">
-                    {formatCurrency(tx.amount)}
+              {loading ? (
+                <tr className="border-b border-zinc-100 dark:border-white/5 last:border-0">
+                  <td colSpan={6} className="px-6 py-6 text-center text-xs text-zinc-500">
+                    Loading transactions...
                   </td>
                 </tr>
-              ))}
+              ) : transactions.length === 0 ? (
+                <tr className="border-b border-zinc-100 dark:border-white/5 last:border-0">
+                  <td colSpan={6} className="px-6 py-6 text-center text-xs text-zinc-500">
+                    No transactions found
+                  </td>
+                </tr>
+              ) : (
+                transactions.map((tx) => (
+                  <tr key={tx.id} className="border-b border-zinc-100 dark:border-white/5 last:border-0 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors">
+                    <td className="px-6 py-4 font-mono font-medium text-zinc-600 dark:text-zinc-400">{tx.id}</td>
+                    <td className="px-6 py-4 text-zinc-900 dark:text-white">{tx.date}</td>
+                    <td className="px-6 py-4">
+                      <span className="font-bold text-zinc-900 dark:text-white block">{tx.plate}</span>
+                      <span className="text-xs text-zinc-500">{tx.branch} • {tx.duration}</span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-white/10 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                        {tx.method}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs flex items-center gap-1">
+                        <Check className="h-3 w-3" /> {tx.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right font-bold text-zinc-900 dark:text-white">
+                      {formatCurrency(tx.amount)}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
