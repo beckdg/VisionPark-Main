@@ -5,6 +5,7 @@ const AuthContext = createContext({
   user: null,
   token: null,
   isAuthenticated: false,
+  isBootstrapping: true,
   login: async () => {},
   refreshMe: async () => {},
   logout: () => {},
@@ -13,6 +14,7 @@ const AuthContext = createContext({
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   const logout = useCallback(() => {
     localStorage.removeItem("accessToken");
@@ -48,6 +50,7 @@ export function AuthProvider({ children }) {
     const bootstrapAuth = async () => {
       const storedToken = localStorage.getItem("accessToken");
       if (!storedToken) {
+        setIsBootstrapping(false);
         return;
       }
 
@@ -56,6 +59,8 @@ export function AuthProvider({ children }) {
         await refreshMe();
       } catch {
         logout();
+      } finally {
+        setIsBootstrapping(false);
       }
     };
 
@@ -67,11 +72,12 @@ export function AuthProvider({ children }) {
       user,
       token,
       isAuthenticated: Boolean(token && user),
+      isBootstrapping,
       login,
       refreshMe,
       logout,
     }),
-    [user, token, login, refreshMe, logout]
+    [user, token, isBootstrapping, login, refreshMe, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -9,6 +9,8 @@ const {
 
 const router = express.Router();
 
+router.get("/public/lots", controller.listPublicLots);
+
 router.get(
   "/lots",
   authenticate,

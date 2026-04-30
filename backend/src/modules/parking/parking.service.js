@@ -40,6 +40,52 @@ class ParkingService {
     throw new ParkingError("Only owners, admins, drivers, and attendants can list lots.", 403);
   }
 
+  async listPublicLots() {
+    const lots = await ParkingLot.find({
+      status: "active",
+      "location.coordinates.1": { $exists: true },
+    })
+      .sort({ name: 1 })
+      .lean();
+
+    if (lots.length === 0) {
+      return [];
+    }
+
+    const lotIds = lots.map((lot) => lot._id);
+    const spotStats = await ParkingSpot.aggregate([
+      { $match: { lotId: { $in: lotIds } } },
+      {
+        $group: {
+          _id: "$lotId",
+          totalSpots: { $sum: 1 },
+          availableSpaces: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "free"] }, 1, 0],
+            },
+          },
+          minRate: { $min: "$paymentRate" },
+        },
+      },
+    ]);
+
+    const statsByLotId = new Map(spotStats.map((row) => [String(row._id), row]));
+    return lots.map((lot) => {
+      const stats = statsByLotId.get(String(lot._id));
+      return {
+        _id: lot._id,
+        name: lot.name,
+        region: lot.region,
+        city: lot.city,
+        address: lot.address,
+        location: lot.location,
+        availableSpaces: Number(stats?.availableSpaces || 0),
+        totalSpots: Number(stats?.totalSpots || 0),
+        price: Number.isFinite(Number(stats?.minRate)) ? Number(stats.minRate) : 0,
+      };
+    });
+  }
+
   async createLot(payload) {
     const { ownerId, name, region, city, address } = payload;
     if (!ownerId || !name || !region || !city || !address) {

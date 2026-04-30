@@ -63,9 +63,35 @@ import AdminProfile from "./admin/pages/AdminProfile";
 import ProtectedRoute from "./shared/auth/ProtectedRoute";
 
 function LoginRoute() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, isBootstrapping, user } = useAuth();
+  if (isBootstrapping) {
+    return null;
+  }
+
   if (!isAuthenticated) {
     return <Login />;
+  }
+
+  if (user?.role === "owner") {
+    return <Navigate to="/owner" replace />;
+  }
+  if (user?.role === "attendant") {
+    return <Navigate to="/attendant" replace />;
+  }
+  if (user?.role === "admin") {
+    return <Navigate to="/admin" replace />;
+  }
+  return <Navigate to="/driver" replace />;
+}
+
+function HomeRoute() {
+  const { isAuthenticated, isBootstrapping, user } = useAuth();
+  if (isBootstrapping) {
+    return null;
+  }
+
+  if (!isAuthenticated) {
+    return <GuestMap />;
   }
 
   if (user?.role === "owner") {
@@ -100,7 +126,7 @@ export default function App() {
             <Routes>
 
               {/* ── PUBLIC ROUTES ── */}
-              <Route path="/" element={<GuestMap />} /> {/* <-- Set to GuestMap */}
+              <Route path="/" element={<HomeRoute />} />
               <Route path="/login" element={<LoginRoute />} />
               <Route path="/signup" element={<DriverSignUp />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />

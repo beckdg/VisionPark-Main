@@ -14,6 +14,15 @@ const listLots = async (req, res, next) => {
   }
 };
 
+const listPublicLots = async (req, res, next) => {
+  try {
+    const lots = await parkingService.listPublicLots();
+    return res.status(200).json(lots);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 const listZones = async (req, res, next) => {
   try {
     const zones = await parkingService.listZones({
@@ -204,6 +213,7 @@ const deriveSpotStatus = async (req, res, next) => {
 };
 
 module.exports = {
+  listPublicLots,
   listLots,
   listZones,
   listSpots,
