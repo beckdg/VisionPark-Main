@@ -4,7 +4,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { apiClient } from "../../api/apiClient";
 
-const DRIVER_LOC = [8.9850, 38.7500];
+const isValidLotCoords = (lat, lon) => {
+  const a = Number(lat);
+  const b = Number(lon);
+  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
+};
 
 export default function ActiveSession() {
   const navigate = useNavigate();
@@ -313,15 +317,51 @@ export default function ActiveSession() {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
-    setPendingMapRoute({ lat: areaData.lat, lon: areaData.lon, name: areaData.name });
+    if (!isValidLotCoords(areaData.lat, areaData.lon)) {
+      setActionError("This lot has no map location yet. Ask the owner to set coordinates on the lot.");
+      return;
+    }
+    setPendingMapRoute({
+      lat: Number(areaData.lat),
+      lon: Number(areaData.lon),
+      name: areaData.name,
+    });
   };
 
   const confirmOpenGoogleMaps = () => {
-    if (pendingMapRoute) {
-      const deepLink = `https://www.google.com/maps/dir/?api=1&origin=${DRIVER_LOC[0]},${DRIVER_LOC[1]}&destination=${pendingMapRoute.lat},${pendingMapRoute.lon}&travelmode=driving`;
-      window.open(deepLink, "_blank", "noopener,noreferrer");
+    if (!pendingMapRoute) return;
+    const destLat = Number(pendingMapRoute.lat);
+    const destLon = Number(pendingMapRoute.lon);
+    if (!isValidLotCoords(destLat, destLon)) {
       setPendingMapRoute(null);
+      setActionError("Invalid lot coordinates for navigation.");
+      return;
     }
+
+    const openMaps = (originLat, originLon) => {
+      const params = new URLSearchParams({ api: "1", travelmode: "driving" });
+      params.set("destination", `${destLat},${destLon}`);
+      if (originLat != null && originLon != null) {
+        params.set("origin", `${originLat},${originLon}`);
+      }
+      window.open(`https://www.google.com/maps/dir/?${params.toString()}`, "_blank", "noopener,noreferrer");
+      setPendingMapRoute(null);
+    };
+
+    if (!("geolocation" in navigator)) {
+      openMaps(null, null);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        openMaps(pos.coords.latitude, pos.coords.longitude);
+      },
+      () => {
+        openMaps(null, null);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
   };
 
   const closeSession = () => {
