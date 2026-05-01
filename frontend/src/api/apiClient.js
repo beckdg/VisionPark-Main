@@ -125,17 +125,19 @@ const deleteWithBody = async (url, body) => {
 
 const get = (url) => request("GET", url);
 const post = (url, body) => request("POST", url, body);
+const put = (url, body) => request("PUT", url, body);
 const patch = (url, body) => request("PATCH", url, body);
 const del = (url) => request("DELETE", url);
 
 export const apiClient = {
   get,
   post,
+  put,
   patch,
   delete: del,
   postFormData,
   deleteWithBody,
 };
 
-export { get, post, patch, del as deleteRequest };
+export { get, post, put, patch, del as deleteRequest };
 
