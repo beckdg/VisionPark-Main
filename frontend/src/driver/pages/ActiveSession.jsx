@@ -16,6 +16,8 @@ export default function ActiveSession() {
   const navState = location.state || {};
   const initialSession = navState.session || null;
   const [session, setSession] = useState(initialSession);
+  /** Avoid flashing "No active session" while /sessions/me/active is in flight. */
+  const [sessionBootstrapLoading, setSessionBootstrapLoading] = useState(() => !initialSession);
 
   const [sessionState, setSessionState] = useState(() => String(initialSession?.state || "Discovery").replace(/^./, (c) => c.toUpperCase()));
   const [spotData, setSpotData] = useState(() => navState.spotData || { id: "--", floor: "--", deposit: 100, paymentRate: 0 });
@@ -121,6 +123,8 @@ export default function ActiveSession() {
         if (!cancelled) {
           setSessionState("Discovery");
         }
+      } finally {
+        if (!cancelled) setSessionBootstrapLoading(false);
       }
     })();
 
@@ -368,6 +372,54 @@ export default function ActiveSession() {
   const closeSession = () => {
     navigate("/driver/map");
   };
+
+  if (sessionBootstrapLoading) {
+    return (
+      <div
+        className="relative h-full w-full overflow-y-auto bg-[#f4f4f5] dark:bg-[#09090b] pt-24 px-4 md:px-8 flex flex-col items-center overscroll-none"
+        aria-busy="true"
+        aria-label="Loading active session"
+      >
+        <div className="relative z-10 w-full max-w-md md:max-w-3xl lg:max-w-4xl mx-auto flex flex-col gap-6 lg:gap-8">
+          <div className="w-full bg-white dark:bg-[#0f0f12]/95 border border-zinc-200 dark:border-white/5 rounded-3xl p-6 md:p-8 lg:p-10 shadow-xl dark:shadow-2xl">
+            <div className="flex items-start justify-between mb-8 border-b border-zinc-100 dark:border-white/5 pb-5">
+              <div className="flex items-center gap-4 min-w-0 flex-1">
+                <div className="h-12 w-12 md:h-14 md:w-14 rounded-full bg-zinc-200 dark:bg-zinc-800 shrink-0 animate-pulse" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="h-6 md:h-7 w-36 max-w-[60%] rounded-lg bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+                  <div className="h-4 md:h-5 w-48 max-w-[80%] rounded-lg bg-zinc-100 dark:bg-zinc-800/80 animate-pulse" />
+                </div>
+              </div>
+              <div className="h-7 w-24 rounded-full bg-zinc-200 dark:bg-zinc-800 shrink-0 animate-pulse" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center">
+              <div className="order-1 md:order-2 flex flex-col items-center justify-center min-h-[180px] md:min-h-[220px]">
+                <div className="h-16 sm:h-20 md:h-24 w-40 sm:w-48 rounded-xl bg-zinc-200 dark:bg-zinc-800 animate-pulse mb-6" />
+                <div className="w-full h-2 md:h-3 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                  <div className="h-full w-2/3 rounded-full bg-zinc-200 dark:bg-zinc-700 animate-pulse" />
+                </div>
+                <div className="h-3 w-32 mt-4 rounded bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+              </div>
+              <div className="order-2 md:order-1 flex flex-col gap-6 md:gap-8">
+                <div className="grid grid-cols-3 gap-2 md:gap-4 rounded-2xl p-4 md:p-6 border border-zinc-100 dark:border-white/5 bg-zinc-50 dark:bg-black/20">
+                  <div className="h-16 rounded-lg bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+                  <div className="h-16 rounded-lg bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+                  <div className="h-16 rounded-lg bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
+                  <div className="h-14 lg:h-16 flex-1 rounded-xl bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+                  <div className="h-14 lg:h-16 flex-[2] rounded-xl bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <p className="text-center text-xs md:text-sm text-zinc-500 dark:text-zinc-400 font-medium">
+            Loading your session…
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ── No Active Session State ──
   if (sessionState === "Discovery" || sessionState === "PaymentSuccess") {
