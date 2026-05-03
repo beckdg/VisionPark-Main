@@ -7,7 +7,11 @@ import { useScroll } from "../../context/ScrollContext";
 import { apiClient } from "../../api/apiClient";
 import { generateDriverReceiptPdf } from "../utils/generateDriverReceiptPdf";
 
-const DRIVER_LOC = [8.9850, 38.7500];
+const isValidLotCoords = (lat, lon) => {
+  const a = Number(lat);
+  const b = Number(lon);
+  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
+};
 
 const formatDate = (value) => {
   if (!value) return "--";
@@ -61,12 +65,15 @@ function mapSessionToUI(session) {
   const merchantRaw =
     (session?.receiptMerchantName && String(session.receiptMerchantName).trim()) || "";
 
+  const lotLat = Number(session?.lotLatitude);
+  const lotLon = Number(session?.lotLongitude);
+
   return {
     id: session?._id,
     spotId: session?.spotCode,
     location: session?.lotName || session?.branchName,
-    lat: 0,
-    lon: 0,
+    lat: Number.isFinite(lotLat) ? lotLat : NaN,
+    lon: Number.isFinite(lotLon) ? lotLon : NaN,
     date: formatDate(session?.reservedAt || session?.startTime),
     startTime: formatTime(session?.startTime || session?.parkedAt),
     endTime: session?.endTime || session?.exitedAt ? formatTime(session?.endTime || session?.exitedAt) : "--:--",
@@ -107,7 +114,9 @@ export default function DriverHistory() {
   const [selectedReceipt, setSelectedReceipt] = useState(null);
   const [downloadStatus, setDownloadStatus] = useState(null); // null | 'downloading' | 'success'
   const [receiptPdfError, setReceiptPdfError] = useState("");
-  const [pendingMapRoute, setPendingMapRoute] = useState(null); // Controls the external navigation modal
+  const [pendingMapRoute, setPendingMapRoute] = useState(null); // { lat, lon, name } for Google Maps modal
+  const [mapNavLoading, setMapNavLoading] = useState(false);
+  const [lotNavError, setLotNavError] = useState("");
   const { setScrolled } = useScroll();
 
   const handleScroll = (e) => setScrolled(e.target.scrollTop > 10);
@@ -143,15 +152,44 @@ export default function DriverHistory() {
   }, [selectedReceipt, downloadStatus, pendingMapRoute]);
 
   useEffect(() => {
-    if (selectedReceipt) setReceiptPdfError("");
+    if (selectedReceipt) {
+      setReceiptPdfError("");
+      setLotNavError("");
+    }
   }, [selectedReceipt]);
 
-  const confirmOpenGoogleMaps = () => {
-    if (pendingMapRoute) {
-      const deepLink = `https://www.google.com/maps/dir/?api=1&origin=$$${DRIVER_LOC[0]},${DRIVER_LOC[1]}&destination=${pendingMapRoute.lat},${pendingMapRoute.lon}&travelmode=driving`;
-      window.open(deepLink, "_blank", "noopener,noreferrer");
-      setPendingMapRoute(null);
+  const openGoogleMapsDestinationOnly = () => {
+    if (!pendingMapRoute) return;
+    const { lat, lon } = pendingMapRoute;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    setPendingMapRoute(null);
+  };
+
+  const openGoogleMapsFromCurrentLocation = () => {
+    if (!pendingMapRoute) return;
+    const { lat, lon } = pendingMapRoute;
+    setMapNavLoading(true);
+    if (!navigator.geolocation) {
+      openGoogleMapsDestinationOnly();
+      setMapNavLoading(false);
+      return;
     }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const oLat = pos.coords.latitude;
+        const oLon = pos.coords.longitude;
+        const url = `https://www.google.com/maps/dir/?api=1&origin=${oLat},${oLon}&destination=${lat},${lon}&travelmode=driving`;
+        window.open(url, "_blank", "noopener,noreferrer");
+        setPendingMapRoute(null);
+        setMapNavLoading(false);
+      },
+      () => {
+        openGoogleMapsDestinationOnly();
+        setMapNavLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
   };
 
   const handleDownload = async () => {
@@ -440,6 +478,9 @@ export default function DriverHistory() {
               {receiptPdfError ? (
                 <p className="text-sm text-red-600 dark:text-red-400 mb-3 text-center">{receiptPdfError}</p>
               ) : null}
+              {lotNavError ? (
+                <p className="text-sm text-amber-700 dark:text-amber-400 mb-3 text-center">{lotNavError}</p>
+              ) : null}
               <div className="flex flex-col sm:flex-row gap-3 md:gap-4">
                 <button
                   type="button"
@@ -453,7 +494,18 @@ export default function DriverHistory() {
                   type="button"
                   onClick={(e) => {
                     e.preventDefault();
-                    setPendingMapRoute({ lat: selectedReceipt.lat, lon: selectedReceipt.lon, name: selectedReceipt.location });
+                    setLotNavError("");
+                    if (!isValidLotCoords(selectedReceipt.lat, selectedReceipt.lon)) {
+                      setLotNavError(
+                        "This lot has no map coordinates yet. Ask the owner to set the lot location on the map."
+                      );
+                      return;
+                    }
+                    setPendingMapRoute({
+                      lat: selectedReceipt.lat,
+                      lon: selectedReceipt.lon,
+                      name: selectedReceipt.location,
+                    });
                   }}
                   className="w-full sm:flex-[2] h-12 md:h-14 flex items-center justify-center gap-2 rounded-xl bg-emerald-500 text-zinc-950 font-bold text-sm md:text-base hover:bg-emerald-400 active:scale-95 transition-all outline-none cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                 >
@@ -473,22 +525,45 @@ export default function DriverHistory() {
               <div className="mx-auto w-16 h-16 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mb-4 shadow-inner">
                 <Navigation className="h-8 w-8" />
               </div>
-              <h3 className="font-bold text-xl text-zinc-900 dark:text-white mb-2">Leaving VisionPark</h3>
-              <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-6">
-                You are about to leave the VisionPark app to open Google Maps for directions to <strong className="text-zinc-900 dark:text-zinc-300">{pendingMapRoute.name}</strong>. Do you want to continue?
+              <h3 className="font-bold text-xl text-zinc-900 dark:text-white mb-2">Open Google Maps</h3>
+              <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                Driving directions to <strong className="text-zinc-900 dark:text-zinc-300">{pendingMapRoute.name}</strong>.
               </p>
-              <div className="flex gap-3">
+              <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-6 leading-relaxed">
+                Choose whether to start from your <strong className="text-zinc-700 dark:text-zinc-400">current device location</strong> (browser will ask for location permission), or open Maps with only the destination so you can pick a starting point inside Google Maps.
+              </p>
+              <div className="flex flex-col gap-2.5">
                 <button
-                  onClick={() => setPendingMapRoute(null)}
-                  className="flex-1 py-3 rounded-xl font-bold text-sm bg-zinc-100 hover:bg-zinc-200 text-zinc-700 dark:bg-white/5 dark:hover:bg-white/10 dark:text-zinc-300 transition-colors outline-none cursor-pointer"
+                  type="button"
+                  disabled={mapNavLoading}
+                  onClick={openGoogleMapsFromCurrentLocation}
+                  className="w-full py-3.5 rounded-xl font-bold text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white shadow-lg shadow-emerald-600/20 transition-all outline-none cursor-pointer flex items-center justify-center gap-2"
                 >
-                  Cancel
+                  {mapNavLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Getting location…
+                    </>
+                  ) : (
+                    <>
+                      From my current location <ExternalLink className="h-4 w-4" />
+                    </>
+                  )}
                 </button>
                 <button
-                  onClick={confirmOpenGoogleMaps}
-                  className="flex-1 py-3 rounded-xl font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition-all outline-none cursor-pointer flex items-center justify-center gap-2"
+                  type="button"
+                  disabled={mapNavLoading}
+                  onClick={openGoogleMapsDestinationOnly}
+                  className="w-full py-3 rounded-xl font-bold text-sm bg-zinc-100 hover:bg-zinc-200 text-zinc-800 dark:bg-white/10 dark:hover:bg-white/15 dark:text-zinc-200 transition-colors outline-none cursor-pointer disabled:opacity-50"
                 >
-                  Open Maps <ExternalLink className="h-4 w-4" />
+                  Destination only (set start in Maps)
+                </button>
+                <button
+                  type="button"
+                  disabled={mapNavLoading}
+                  onClick={() => { setPendingMapRoute(null); setMapNavLoading(false); }}
+                  className="w-full py-3 rounded-xl font-bold text-sm text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors outline-none cursor-pointer"
+                >
+                  Cancel
                 </button>
               </div>
             </div>

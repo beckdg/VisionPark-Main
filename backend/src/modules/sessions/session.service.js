@@ -300,7 +300,7 @@ class SessionService {
       .populate({ path: "spotId", select: "spotCode" })
       .populate({
         path: "lotId",
-        select: "name address city region ownerId",
+        select: "name address city region ownerId location",
         populate: { path: "ownerId", select: "name owner" },
       })
       .lean();
@@ -397,6 +397,10 @@ class SessionService {
         const ownerLegalName = ownerDoc?.name != null ? String(ownerDoc.name).trim() : "";
         const receiptMerchantName = company || ownerLegalName || null;
 
+        const coords = s.lotId?.location?.coordinates;
+        const lotLng = Array.isArray(coords) && coords.length >= 2 ? Number(coords[0]) : null;
+        const lotLat = Array.isArray(coords) && coords.length >= 2 ? Number(coords[1]) : null;
+
         return {
           _id: s._id,
           spotCode: s?.spotId?.spotCode ?? null,
@@ -405,6 +409,8 @@ class SessionService {
           lotAddress: s?.lotId?.address ?? null,
           lotCity: s?.lotId?.city ?? null,
           lotRegion: s?.lotId?.region ?? null,
+          lotLatitude: Number.isFinite(lotLat) ? lotLat : null,
+          lotLongitude: Number.isFinite(lotLng) ? lotLng : null,
           receiptMerchantName,
           state: s.state,
           reservedAt: s.reservedAt ?? null,
