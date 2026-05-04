@@ -312,15 +312,24 @@ class SessionService {
         : await Transaction.find({ sessionId: { $in: sessionIds }, status: "success" })
             .sort({ createdAt: -1 })
             .lean();
-    const txBySessionId = new Map();
+    const txsBySessionId = new Map();
     for (const t of transactions) {
       const key = String(t.sessionId);
-      if (!txBySessionId.has(key)) txBySessionId.set(key, t);
+      if (!txsBySessionId.has(key)) txsBySessionId.set(key, []);
+      txsBySessionId.get(key).push(t);
     }
 
     return Promise.all(
       sessions.map(async (s) => {
-        const tx = txBySessionId.get(String(s._id));
+        const txs = txsBySessionId.get(String(s._id)) || [];
+        const resTx = txs.find((t) => t.metadata?.type === "reservation_fee");
+        const parkTx = txs.find((t) => t.metadata?.type === "parking_fee");
+        const legacyTx = txs.find(
+          (t) =>
+            !t.metadata?.type ||
+            (t.metadata.type !== "reservation_fee" && t.metadata.type !== "parking_fee")
+        );
+
         const parkedAt = s.securedAt || null;
         const exitedAt = s.closedAt || s.expiredAt || null;
         const durationSeconds =
@@ -328,8 +337,8 @@ class SessionService {
             ? Math.max(0, Math.floor((new Date(exitedAt).getTime() - new Date(parkedAt).getTime()) / 1000))
             : null;
 
-        const paymentMethod = tx?.method ?? null;
-        const metaParkRaw = tx?.metadata?.parkingAmount ?? tx?.metadata?.usageFee;
+        const paymentMethod = parkTx?.method ?? resTx?.method ?? legacyTx?.method ?? null;
+        const metaParkRaw = resTx?.metadata?.parkingAmount ?? resTx?.metadata?.usageFee;
         const metaPark =
           metaParkRaw != null && String(metaParkRaw).trim() !== "" && !Number.isNaN(Number(metaParkRaw))
             ? Number(metaParkRaw)
@@ -342,14 +351,17 @@ class SessionService {
             ? Number(s.parkingFeeEtb)
             : null;
 
-        const isReservationTx = tx?.metadata?.type === "reservation_fee";
         let reservationPaymentAmount = null;
         let parkingPaymentAmount = null;
         let parkingPaymentIsEstimate = false;
 
-        if (tx) {
-          if (isReservationTx) {
-            reservationPaymentAmount = Number(tx.amount) || 0;
+        if (parkTx) {
+          parkingPaymentAmount = Number(parkTx.amount) || 0;
+        }
+
+        if (resTx) {
+          reservationPaymentAmount = Number(resTx.amount) || 0;
+          if (parkingPaymentAmount == null) {
             if (metaPark != null) {
               parkingPaymentAmount = metaPark;
             } else if (storedParkingFee != null) {
@@ -369,27 +381,36 @@ class SessionService {
             } else {
               parkingPaymentAmount = 0;
             }
-          } else {
-            reservationPaymentAmount = null;
-            parkingPaymentAmount = Number(tx.amount) || 0;
+          }
+        } else if (legacyTx) {
+          reservationPaymentAmount = null;
+          if (parkingPaymentAmount == null) {
+            parkingPaymentAmount = Number(legacyTx.amount) || 0;
           }
         }
 
-        const totalPaidAmount = tx ? Number(tx.amount) || 0 : 0;
+        const totalPaidAmount = txs.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
+        const hasReservationFlow = Boolean(resTx && (Number(resTx.amount) > 0));
         let sessionBillingTotal = null;
-        if (tx && isReservationTx && reservationPaymentAmount != null && parkingPaymentAmount != null) {
+        if (hasReservationFlow && reservationPaymentAmount != null && parkingPaymentAmount != null) {
           sessionBillingTotal = Number(
             (Number(reservationPaymentAmount) + Number(parkingPaymentAmount)).toFixed(2)
           );
-        } else if (tx && !isReservationTx) {
-          sessionBillingTotal = totalPaidAmount;
+        } else if (parkTx && !resTx) {
+          sessionBillingTotal = Number(parkTx.amount) || 0;
+        } else if (legacyTx && !parkTx && !resTx) {
+          sessionBillingTotal = Number(legacyTx.amount) || 0;
+        } else if (txs.length) {
+          sessionBillingTotal = Number(totalPaidAmount.toFixed(2));
         }
 
         const depositAmount =
           reservationPaymentAmount ??
-          tx?.metadata?.depositAmount ??
-          tx?.metadata?.reservationFee ??
+          resTx?.metadata?.depositAmount ??
+          resTx?.metadata?.reservationFee ??
+          legacyTx?.metadata?.depositAmount ??
+          legacyTx?.metadata?.reservationFee ??
           null;
 
         const ownerDoc = s.lotId?.ownerId;

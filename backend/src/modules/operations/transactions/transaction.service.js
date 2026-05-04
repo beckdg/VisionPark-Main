@@ -19,7 +19,10 @@ class TransactionService {
     const amount = Number(payload?.amount);
     const paymentMethod = String(payload?.paymentMethod || payload?.method || "").trim();
     const requestedStatus = String(payload?.status || "completed").toLowerCase();
-    const transactionType = String(payload?.type || "general").trim().toLowerCase();
+    let resolvedType = String(payload?.type || payload?.transactionType || "")
+      .trim()
+      .toLowerCase();
+    if (!resolvedType) resolvedType = "general";
     const idempotencyKey = String(
       payload?.idempotencyKey || `driver-manual:${user.userId}:${sessionId || "unknown"}`
     );
@@ -28,17 +31,44 @@ class TransactionService {
       throw new ValidationError("sessionId, amount, and paymentMethod are required.");
     }
 
-    const session = await ParkingSession.findById(sessionId).select("driverId state");
+    const session = await ParkingSession.findById(sessionId)
+      .select("driverId state parkingFeeEtb")
+      .lean();
     if (!session) throw new NotFoundError("Session not found.");
     if (String(session.driverId) !== String(user.userId)) {
       throw new TransactionError("You can only create transactions for your own sessions.", 403);
     }
-    const isReservationFee = transactionType === "reservation_fee";
+
+    if (
+      (resolvedType === "general" || resolvedType === "") &&
+      session.state === "closed"
+    ) {
+      const pf = session.parkingFeeEtb;
+      if (pf != null && Number.isFinite(Number(pf)) && Math.abs(Number(amount) - Number(pf)) <= 0.02) {
+        const parkingPaid = await Transaction.findOne({
+          sessionId,
+          status: "success",
+          "metadata.type": "parking_fee",
+        })
+          .select("_id")
+          .lean();
+        if (!parkingPaid) {
+          resolvedType = "parking_fee";
+        }
+      }
+    }
+
+    const isReservationFee = resolvedType === "reservation_fee";
+    const isParkingFee = resolvedType === "parking_fee";
     if (isReservationFee) {
       if (!["reserved", "secured", "closed"].includes(session.state)) {
         throw new ConflictError(
           "Reservation fee can only be paid for reserved, secured, or closed sessions."
         );
+      }
+    } else if (isParkingFee) {
+      if (session.state !== "closed") {
+        throw new ConflictError("Parking fee can only be paid after the session is closed.");
       }
     } else if (session.state !== "closed") {
       throw new ConflictError("Transaction can only be created after session is closed.");
@@ -52,16 +82,57 @@ class TransactionService {
       throw new ValidationError("Reservation fee transaction amount must be exactly 100 ETB.");
     }
 
+    if (isParkingFee) {
+      if (session?.parkingFeeEtb != null && Number.isFinite(Number(session.parkingFeeEtb))) {
+        const expected = Number(session.parkingFeeEtb);
+        if (Math.abs(Number(amount) - expected) > 0.02) {
+          throw new ValidationError(
+            `Parking fee must match the amount recorded at close (${expected} ETB).`
+          );
+        }
+      }
+    }
+
     const existing = await Transaction.findOne({ sessionId, idempotencyKey });
     if (existing) return existing;
 
-    const alreadySuccessful = await Transaction.findOne({ sessionId, status: "success" });
-    if (alreadySuccessful) {
-      return alreadySuccessful;
+    if (isReservationFee) {
+      const dup = await Transaction.findOne({
+        sessionId,
+        status: "success",
+        "metadata.type": "reservation_fee",
+      });
+      if (dup) return dup;
+    } else if (isParkingFee) {
+      const dup = await Transaction.findOne({
+        sessionId,
+        status: "success",
+        "metadata.type": "parking_fee",
+      });
+      if (dup) return dup;
+    } else {
+      const legacyDup = await Transaction.findOne({
+        sessionId,
+        status: "success",
+        $or: [
+          { "metadata.type": { $exists: false } },
+          { "metadata.type": null },
+          { "metadata.type": "" },
+          { "metadata.type": { $nin: ["reservation_fee", "parking_fee"] } },
+        ],
+      });
+      if (legacyDup) {
+        return legacyDup;
+      }
     }
 
     const now = new Date();
     try {
+      const metadata = isReservationFee
+        ? { type: "reservation_fee" }
+        : isParkingFee
+          ? { type: "parking_fee" }
+          : {};
       const created = await Transaction.create({
         sessionId,
         driverId: user.userId,
@@ -70,7 +141,7 @@ class TransactionService {
         status: "success",
         providerRef: null,
         idempotencyKey,
-        metadata: isReservationFee ? { type: "reservation_fee" } : {},
+        metadata,
         completedAt: now,
       });
 
@@ -92,10 +163,26 @@ class TransactionService {
       return created;
     } catch (error) {
       if (error && error.code === 11000) {
-        const recovered =
-          (await Transaction.findOne({ sessionId, idempotencyKey })) ||
-          (await Transaction.findOne({ sessionId, status: "success" }));
-        if (recovered) return recovered;
+        const byKey = await Transaction.findOne({ sessionId, idempotencyKey });
+        if (byKey) return byKey;
+        if (isReservationFee) {
+          const r = await Transaction.findOne({
+            sessionId,
+            status: "success",
+            "metadata.type": "reservation_fee",
+          });
+          if (r) return r;
+        }
+        if (isParkingFee) {
+          const p = await Transaction.findOne({
+            sessionId,
+            status: "success",
+            "metadata.type": "parking_fee",
+          });
+          if (p) return p;
+        }
+        const any = await Transaction.findOne({ sessionId, status: "success" });
+        if (any) return any;
       }
       throw error;
     }
@@ -107,10 +194,30 @@ class TransactionService {
       Transaction.countDocuments({ sessionId, status: "pending" }),
     ]);
 
+    if (pendingCount > 0) {
+      return { successfulCount, pendingCount, isStableForClosure: false };
+    }
+
+    let isStableForClosure = successfulCount === 1;
+
+    const session = await ParkingSession.findById(sessionId).select("state paymentRequired").lean();
+    if (session?.paymentRequired && session?.state === "closed" && successfulCount >= 1) {
+      const reservationPaid = await Transaction.findOne({
+        sessionId,
+        status: "success",
+        "metadata.type": "reservation_fee",
+      })
+        .select("_id")
+        .lean();
+      if (reservationPaid) {
+        isStableForClosure = true;
+      }
+    }
+
     return {
       successfulCount,
       pendingCount,
-      isStableForClosure: successfulCount === 1 && pendingCount === 0,
+      isStableForClosure,
     };
   }
 
@@ -144,12 +251,24 @@ class TransactionService {
     const existing = await Transaction.findOne({ sessionId, idempotencyKey });
     if (existing) return existing;
 
-    const alreadySuccessful = await Transaction.findOne({
-      sessionId,
-      status: "success",
-    });
-    if (alreadySuccessful) {
-      throw new ConflictError("A successful transaction already exists for this session.");
+    const feeType = metadata?.type;
+    if (feeType === "reservation_fee" || feeType === "parking_fee") {
+      const dup = await Transaction.findOne({
+        sessionId,
+        status: "success",
+        "metadata.type": feeType,
+      });
+      if (dup) {
+        throw new ConflictError(`A successful ${feeType} transaction already exists for this session.`);
+      }
+    } else {
+      const alreadySuccessful = await Transaction.findOne({
+        sessionId,
+        status: "success",
+      });
+      if (alreadySuccessful) {
+        throw new ConflictError("A successful transaction already exists for this session.");
+      }
     }
 
     try {
@@ -206,13 +325,31 @@ class TransactionService {
     }
 
     if (status === "success") {
-      const alreadySuccessful = await Transaction.findOne({
-        sessionId: transaction.sessionId,
-        status: "success",
-        _id: { $ne: transaction._id },
-      });
-      if (alreadySuccessful) {
-        throw new ConflictError("A successful transaction already exists for this session.");
+      const mergedMeta = { ...transaction.metadata, ...metadata };
+      const feeType = mergedMeta?.type;
+      let conflicting;
+      if (feeType === "reservation_fee" || feeType === "parking_fee") {
+        conflicting = await Transaction.findOne({
+          sessionId: transaction.sessionId,
+          status: "success",
+          _id: { $ne: transaction._id },
+          "metadata.type": feeType,
+        });
+      } else {
+        conflicting = await Transaction.findOne({
+          sessionId: transaction.sessionId,
+          status: "success",
+          _id: { $ne: transaction._id },
+          $or: [
+            { "metadata.type": { $exists: false } },
+            { "metadata.type": null },
+            { "metadata.type": "" },
+            { "metadata.type": { $nin: ["reservation_fee", "parking_fee"] } },
+          ],
+        });
+      }
+      if (conflicting) {
+        throw new ConflictError("A conflicting successful transaction already exists for this session.");
       }
     }
 

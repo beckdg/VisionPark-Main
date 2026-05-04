@@ -39,12 +39,16 @@ transactionSchema.index(
   { unique: true, name: "uniq_transaction_session_idempotency" }
 );
 
+/** At most one reservation_fee and one parking_fee success per session. */
 transactionSchema.index(
-  { sessionId: 1 },
+  { sessionId: 1, "metadata.type": 1 },
   {
     unique: true,
-    partialFilterExpression: { status: "success" },
-    name: "uniq_successful_transaction_per_session",
+    partialFilterExpression: {
+      status: "success",
+      "metadata.type": { $in: ["reservation_fee", "parking_fee"] },
+    },
+    name: "uniq_typed_fee_success_per_session",
   }
 );
 
