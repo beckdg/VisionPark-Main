@@ -55,6 +55,24 @@ router.get(
   controller.getMySessions
 );
 router.get(
+  "/:sessionId/exit-eligibility",
+  authenticate,
+  requireSessionReadAccess,
+  controller.getExitEligibility
+);
+router.post(
+  "/:sessionId/exit-validate",
+  authenticate,
+  requireSessionReadAccess,
+  controller.validatePhysicalExit
+);
+router.post(
+  "/:sessionId/exit-override",
+  authenticate,
+  authorize("attendant", "admin"),
+  controller.postExitOverride
+);
+router.get(
   "/:sessionId",
   authenticate,
   requireSessionReadAccess,

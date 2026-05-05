@@ -22,6 +22,7 @@ const { attendantIncidentRoutes } = require("../modules/attendantIncidents");
 const { ownerOperationsRoutes } = require("../modules/ownerOperations");
 const { uploadRoutes } = require("../modules/uploads");
 const { pricingRoutes } = require("../modules/pricing");
+const { paymentRoutes } = require("../modules/payments");
 const { ParkingSession } = require("../modules/sessions/models/parking-session.model");
 const { ParkingSpot } = require("../modules/parking/models/parking-spot.model");
 const { Incident } = require("../modules/operations/models/incident.model");
@@ -161,6 +162,7 @@ const createApp = () => {
   app.use("/api/owner", ownerOperationsRoutes);
   app.use("/api/uploads", uploadRoutes);
   app.use("/api/pricing", pricingRoutes);
+  app.use("/api/payments", paymentRoutes);
   app.use("/api", financeRoutes);
 
   app.use(notFoundHandler);

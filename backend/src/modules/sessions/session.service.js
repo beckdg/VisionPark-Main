@@ -7,6 +7,7 @@ const { LotPricing } = require("../pricing/models/lot-pricing.model");
 const { DEFAULT_HOURLY_RATE_ETB } = require("../pricing/pricing.constants");
 const { domainEventBus, DOMAIN_EVENTS } = require("../operations/shared/domain-events");
 const { AppError, ValidationError, ConflictError, NotFoundError } = require("../../common/errors");
+const { logger } = require("../../common/logger");
 
 class SessionError extends AppError {
   constructor(message, statusCode = 400) {
@@ -166,7 +167,7 @@ class SessionService {
     });
   }
 
-  async closeSession({ sessionId, idempotencyKey, closeReason = "closed" }) {
+  async closeSession({ sessionId, idempotencyKey, closeReason = "closed", actor = null }) {
     const existing = await this.getById(sessionId);
     if (existing.state === "closed") {
       this.#emitSessionEvent(existing);
@@ -210,14 +211,24 @@ class SessionService {
       };
     }
 
+    const feeVal =
+      parkingClosePatch.parkingFeeEtb != null &&
+      Number.isFinite(Number(parkingClosePatch.parkingFeeEtb))
+        ? Number(parkingClosePatch.parkingFeeEtb)
+        : 0;
+    const exitGatePatch =
+      feeVal > 0
+        ? { exitAllowed: false, paymentStatus: "unpaid" }
+        : { exitAllowed: true, paymentStatus: "paid" };
+
     try {
-      return await this.#transitionSession({
+      let updated = await this.#transitionSession({
         sessionId,
         expectedState: ["secured", "expired"],
         nextState: "closed",
         action: "close_session",
         idempotencyKey,
-        statePatch: { closedAt, closeReason, ...parkingClosePatch },
+        statePatch: { closedAt, closeReason, ...parkingClosePatch, ...exitGatePatch },
         preTransitionValidation: async () => {
           const latest = await ParkingSession.findById(sessionId).select(
             "state paymentRequired spotId"
@@ -237,6 +248,35 @@ class SessionService {
           return null;
         },
       });
+
+      const feeAfter =
+        updated?.parkingFeeEtb != null && Number.isFinite(Number(updated.parkingFeeEtb))
+          ? Number(updated.parkingFeeEtb)
+          : 0;
+      const bypass = Boolean(actor?.bypassExitPayment);
+      const staff = actor && ["attendant", "admin"].includes(actor.role);
+      if (bypass && staff && feeAfter > 0) {
+        await ParkingSession.findByIdAndUpdate(updated._id, {
+          $set: {
+            exitAllowed: true,
+            paymentStatus: "paid",
+            exitOverride: {
+              allowedBy: actor.userId,
+              allowedAt: new Date(),
+              reason: String(actor.bypassReason || "").slice(0, 500),
+            },
+          },
+        });
+        updated = await ParkingSession.findById(updated._id);
+        logger.info("payments.session_exit_bypass_on_close", {
+          module: "session.service",
+          sessionId: String(sessionId),
+          actorUserId: String(actor.userId),
+          role: actor.role,
+        });
+      }
+
+      return updated;
     } catch (error) {
       const latest = await ParkingSession.findById(sessionId).select("state spotId");
       if (latest && latest.state === "closed") {
@@ -248,6 +288,73 @@ class SessionService {
       }
       throw error;
     }
+  }
+
+  async getExitEligibilitySnapshot(sessionId) {
+    const s = await ParkingSession.findById(sessionId)
+      .select("state parkingFeeEtb exitAllowed paymentStatus exitOverride closedAt")
+      .lean();
+    if (!s) throw new NotFoundError("Session not found.");
+    const fee =
+      s.parkingFeeEtb != null && Number.isFinite(Number(s.parkingFeeEtb))
+        ? Number(s.parkingFeeEtb)
+        : 0;
+    const needsPayment = s.state === "closed" && fee > 0;
+    const canExit = !needsPayment || s.exitAllowed === true;
+    return {
+      sessionId: String(sessionId),
+      state: s.state,
+      parkingFeeEtb: s.parkingFeeEtb,
+      exitAllowed: s.exitAllowed,
+      paymentStatus: s.paymentStatus,
+      exitOverride: s.exitOverride || null,
+      needsPayment,
+      canExit,
+    };
+  }
+
+  async assertPhysicalExitAllowed(sessionId) {
+    const s = await ParkingSession.findById(sessionId)
+      .select("state parkingFeeEtb exitAllowed paymentStatus")
+      .lean();
+    if (!s) throw new NotFoundError("Session not found.");
+    const fee =
+      s.parkingFeeEtb != null && Number.isFinite(Number(s.parkingFeeEtb))
+        ? Number(s.parkingFeeEtb)
+        : 0;
+    if (s.state === "closed" && fee > 0 && s.exitAllowed !== true) {
+      throw new SessionError(
+        "Parking payment is required before exit. Complete payment or ask staff for an override.",
+        403
+      );
+    }
+    return s;
+  }
+
+  async allowExitOverride({ sessionId, userId, role, reason }) {
+    if (!["attendant", "admin"].includes(role)) {
+      throw new SessionError("Only attendants or admins may override exit gate.", 403);
+    }
+    const session = await ParkingSession.findById(sessionId);
+    if (!session) throw new NotFoundError("Session not found.");
+    await ParkingSession.findByIdAndUpdate(sessionId, {
+      $set: {
+        exitAllowed: true,
+        paymentStatus: "paid",
+        exitOverride: {
+          allowedBy: userId,
+          allowedAt: new Date(),
+          reason: String(reason || "").slice(0, 500),
+        },
+      },
+    });
+    logger.info("payments.session_exit_override", {
+      module: "session.service",
+      sessionId: String(sessionId),
+      userId: String(userId),
+      role,
+    });
+    return ParkingSession.findById(sessionId);
   }
 
   async getById(sessionId) {

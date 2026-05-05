@@ -51,6 +51,30 @@ const parkingSessionSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true, index: true },
     paymentRequired: { type: Boolean, default: false, index: true },
     closeReason: { type: String, trim: true, default: null },
+    /** Online / gateway settlement (e.g. Chapa). Manual flows may leave this unset. */
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "pending", "paid"],
+      default: "unpaid",
+      index: true,
+    },
+    /**
+     * Physical exit / gate release. Default true until a positive parking fee is recorded at close;
+     * then false until parking is paid (Chapa/manual) or staff override.
+     */
+    exitAllowed: { type: Boolean, default: true, index: true },
+    /** Staff-only bypass of exit gate without a payment record (audited). */
+    exitOverride: {
+      type: new mongoose.Schema(
+        {
+          allowedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+          allowedAt: { type: Date, required: true },
+          reason: { type: String, trim: true, default: "" },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
     /** Usage fee at close (ETB), from lot pricing + parked duration — not zone/spot paymentRate. */
     parkingFeeEtb: { type: Number, default: null },
     appliedHourlyRateEtb: { type: Number, default: null },

@@ -4,6 +4,7 @@ const { logger } = require("../../common/logger");
 const { validateAIEventPayload, AI_EVENT_TYPES } = require("./contracts");
 const { upsertCameraNode } = require("./camera-registry");
 const { SessionService } = require("../sessions/session.service");
+const { ParkingSession } = require("../sessions/models/parking-session.model");
 const { IncidentService } = require("../operations/incidents/incident.service");
 const { randomUUID } = require("crypto");
 const { markAIProcessed } = require("../../app/runtime-state");
@@ -111,6 +112,29 @@ class AIIngestionService {
     if (!sessionId) {
       mappedActions.push({ type: "session_close_skipped", reason: "missing_sessionId" });
       return;
+    }
+
+    const pre = await ParkingSession.findById(sessionId)
+      .select("state parkingFeeEtb exitAllowed")
+      .lean();
+    if (pre?.state === "closed") {
+      const fee =
+        pre.parkingFeeEtb != null && Number.isFinite(Number(pre.parkingFeeEtb))
+          ? Number(pre.parkingFeeEtb)
+          : 0;
+      if (fee > 0 && pre.exitAllowed !== true) {
+        logger.warn("payments.ai_exit_blocked_unpaid_closed", {
+          module: "ai-ingestion.service",
+          correlationId,
+          sessionId: String(sessionId),
+        });
+        mappedActions.push({
+          type: "session_exit_blocked",
+          reason: "payment_required_before_exit",
+          sessionId: String(sessionId),
+        });
+        return;
+      }
     }
 
     const session = await this.sessionService.closeSession({

@@ -101,6 +101,13 @@ const env = {
   cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME?.trim() || null,
   cloudinaryApiKey: process.env.CLOUDINARY_API_KEY?.trim() || null,
   cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET?.trim() || null,
+  chapaSecretKey: process.env.CHAPA_SECRET_KEY?.trim() || null,
+  chapaPublicKey: process.env.CHAPA_PUBLIC_KEY?.trim() || null,
+  chapaBaseUrl: (process.env.CHAPA_BASE_URL || "https://api.chapa.co/v1").trim(),
+  chapaCallbackUrl: process.env.CHAPA_CALLBACK_URL?.trim() || null,
+  chapaReturnUrl: process.env.CHAPA_RETURN_URL?.trim() || null,
+  chapaWebhookSecret: process.env.CHAPA_WEBHOOK_SECRET?.trim() || null,
+  paymentPendingExpiryJobMs: Number(process.env.PAYMENT_PENDING_EXPIRY_JOB_MS || 60_000),
 };
 
 module.exports = { env };

@@ -1,11 +1,13 @@
 const { ReservationExpiryJob } = require("./reservation-expiry.job");
 const { ReconciliationJob } = require("./reconciliation.job");
+const { PaymentPendingExpiryJob } = require("./payment-pending-expiry.job");
 const { logger } = require("../common/logger");
 const { env } = require("../config/env");
 const { markJobsInitialized, markJobHeartbeat } = require("../app/runtime-state");
 
 const reservationExpiryJob = new ReservationExpiryJob();
 const reconciliationJob = new ReconciliationJob();
+const paymentPendingExpiryJob = new PaymentPendingExpiryJob();
 
 const sanitizeIntervalMs = (value, fallback, name) => {
   const n = Number(value);
@@ -33,6 +35,11 @@ const startJobs = (options = {}) => {
     30000,
     "reconciliationJobMs"
   );
+  const paymentPendingExpiryIntervalMs = sanitizeIntervalMs(
+    options.paymentPendingExpiryIntervalMs || env.paymentPendingExpiryJobMs,
+    60000,
+    "paymentPendingExpiryJobMs"
+  );
 
   markJobsInitialized();
 
@@ -44,6 +51,12 @@ const startJobs = (options = {}) => {
   });
   reconciliationJob.runOnce().catch((error) => {
     logger.error("Initial reconciliation job run failed", {
+      module: "jobs.index",
+      error,
+    });
+  });
+  paymentPendingExpiryJob.runOnce().catch((error) => {
+    logger.error("Initial payment pending expiry job run failed", {
       module: "jobs.index",
       error,
     });
@@ -71,13 +84,26 @@ const startJobs = (options = {}) => {
   }, reconciliationIntervalMs);
   reconciliationTimer.unref();
 
+  const paymentPendingExpiryTimer = setInterval(() => {
+    markJobHeartbeat();
+    paymentPendingExpiryJob.runOnce().catch((error) => {
+      logger.error("Payment pending expiry job run failed", {
+        module: "jobs.index",
+        error,
+      });
+    });
+  }, paymentPendingExpiryIntervalMs);
+  paymentPendingExpiryTimer.unref();
+
   return {
     stop() {
       clearInterval(reservationTimer);
       clearInterval(reconciliationTimer);
+      clearInterval(paymentPendingExpiryTimer);
     },
     reservationExpiryJob,
     reconciliationJob,
+    paymentPendingExpiryJob,
   };
 };
 
@@ -85,4 +111,5 @@ module.exports = {
   startJobs,
   reservationExpiryJob,
   reconciliationJob,
+  paymentPendingExpiryJob,
 };

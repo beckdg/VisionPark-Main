@@ -26,6 +26,7 @@ import DriverMap from "./driver/pages/DriverMap";
 import ActiveSession from "./driver/pages/ActiveSession";
 import DriverHistory from "./driver/pages/DriverHistory";
 import DriverProfile from "./driver/pages/DriverProfile";
+import PaymentSuccess from "./driver/pages/PaymentSuccess";
 
 // --- 5. OWNER PAGES ---
 import Dashboard from "./owner/pages/Dashboard";
@@ -131,6 +132,14 @@ export default function App() {
               <Route path="/signup" element={<DriverSignUp />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+              <Route
+                path="/payment/success"
+                element={
+                  <ProtectedRoute allowedRoles={["driver"]}>
+                    <PaymentSuccess />
+                  </ProtectedRoute>
+                }
+              />
 
               {/* ── ADMIN AUTH ──
                 Sits outside AdminLayout — pre-login page.
