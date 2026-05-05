@@ -9,6 +9,8 @@ const isValidLotCoords = (lat, lon) => {
   const b = Number(lon);
   return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
 };
+const buildIdempotencyKey = (prefix) =>
+  `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
 
 export default function ActiveSession() {
   const navigate = useNavigate();
@@ -314,6 +316,8 @@ export default function ActiveSession() {
         amount: paymentData.totalAmount,
         paymentMethod: selectedPaymentMethod,
         status: "completed",
+        type: "parking_fee",
+        idempotencyKey: buildIdempotencyKey("parking_fee"),
       });
       setShowPaymentModal(false);
       localStorage.removeItem("activeSessionId");
