@@ -17,6 +17,32 @@ const CHAPA_METHOD_REGEX = /^chapa$/i;
 const PENDING_CHECKOUT_MS = 15 * 60 * 1000;
 const VERIFY_AMOUNT_TOLERANCE = 0.01;
 
+const stringifyIfObject = (value) => {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const extractChapaErrorMessage = (err, fallback) => {
+  const payload = err?.response?.data;
+  const candidates = [
+    payload?.message,
+    payload?.error,
+    payload?.detail,
+    err?.message,
+  ];
+
+  for (const item of candidates) {
+    const text = stringifyIfObject(item).trim();
+    if (text) return text;
+  }
+  return fallback;
+};
+
 class ChapaServiceError extends AppError {
   constructor(message, statusCode = 400) {
     super(message, statusCode, "CHAPA_ERROR");
@@ -72,7 +98,8 @@ class ChapaService {
   }
 
   buildParkingTxRef(sessionId) {
-    return `parking:${String(sessionId)}`;
+    // Chapa tx_ref allows letters, numbers, hyphen, underscore, and dots.
+    return `parking_${String(sessionId)}`;
   }
 
   async #computeClosedParkingAmount(session) {
@@ -275,7 +302,7 @@ class ChapaService {
       callback_url: env.chapaCallbackUrl,
       return_url: env.chapaReturnUrl,
       customization: {
-        title: "Parking Fee Payment",
+        title: "Parking Payment",
         description: "VisionPark parking session payment",
       },
     };
@@ -288,11 +315,7 @@ class ChapaService {
       });
       chapaData = response.data;
     } catch (err) {
-      const msg =
-        err?.response?.data?.message ||
-        err?.response?.data?.error ||
-        err?.message ||
-        "Failed to reach Chapa.";
+      const msg = extractChapaErrorMessage(err, "Failed to reach Chapa.");
       logger.error("payments.chapa_initialize_http_error", {
         module: "chapa.service",
         sessionId: String(sessionId),
@@ -349,11 +372,7 @@ class ChapaService {
       });
       return response.data;
     } catch (err) {
-      const msg =
-        err?.response?.data?.message ||
-        err?.response?.data?.error ||
-        err?.message ||
-        "Chapa verify request failed.";
+      const msg = extractChapaErrorMessage(err, "Chapa verify request failed.");
       throw new ChapaServiceError(msg, 502);
     }
   }
