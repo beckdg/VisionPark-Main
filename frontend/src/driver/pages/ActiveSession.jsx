@@ -9,6 +9,8 @@ const isValidLotCoords = (lat, lon) => {
   const b = Number(lon);
   return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
 };
+const buildIdempotencyKey = (prefix) =>
+  `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
 
 export default function ActiveSession() {
   const navigate = useNavigate();
@@ -297,6 +299,18 @@ export default function ActiveSession() {
     setActionError("");
     setIsSubmittingPayment(true);
     try {
+      if (selectedPaymentMethod === "Chapa") {
+        const data = await apiClient.post("/payments/chapa/initialize", {
+          sessionId: paymentData.sessionId,
+        });
+        const checkoutUrl = data?.checkout_url;
+        if (!checkoutUrl) {
+          throw new Error("Chapa did not return a checkout URL.");
+        }
+        window.location.href = checkoutUrl;
+        return;
+      }
+
       await apiClient.post("/operations/transactions", {
         sessionId: paymentData.sessionId,
         amount: Number(paymentData.totalAmount),

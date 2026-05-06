@@ -13,6 +13,8 @@ import { useAuth } from "../../context/AuthContext";
 
 const DEFAULT_LOC = [9.0249, 38.7468]; // Addis Ababa Center
 const PAYMENT_OPTIONS = ["Telebirr", "CBE", "COOP", "Bank of Abyssinia"];
+const buildIdempotencyKey = (prefix) =>
+  `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
 const normalizeRegionId = (region) => {
   const val = String(region || "").trim().toLowerCase();
   if (val.includes("addis")) return "Addis Ababa";
@@ -446,21 +448,14 @@ export default function DriverMap() {
     }
     try {
       const timestamp = new Date().toLocaleString();
-      let session;
-      try {
-        session = await apiClient.post("/sessions/reservations", {
-          driverId: user._id,
-          spotId: selectedSpot._id,
-        });
-      } catch (firstError) {
-        session = await apiClient.post("/sessions/reservations", {
-          driverId: user._id,
-          lotId: selectedSpot.lotId,
-          zoneId: selectedSpot.zoneId,
-          spotId: selectedSpot._id,
-          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-        });
-      }
+      const session = await apiClient.post("/sessions/reservations", {
+        driverId: user._id,
+        lotId: selectedSpot.lotId,
+        zoneId: selectedSpot.zoneId,
+        spotId: selectedSpot._id,
+        expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        idempotencyKey: buildIdempotencyKey("reservation"),
+      });
       await apiClient.post("/operations/transactions", {
         sessionId: session?._id,
         amount: 100,
@@ -468,6 +463,7 @@ export default function DriverMap() {
         paymentMethod,
         status: "completed",
         type: "reservation_fee",
+        idempotencyKey: buildIdempotencyKey("reservation_fee"),
       });
       setPaymentTimestamp(timestamp);
       setUiState("PaymentSuccess");

@@ -1,7 +1,45 @@
 const { Transaction } = require("../models/transaction.model");
 const { ParkingSession } = require("../../sessions/models/parking-session.model");
 const { domainEventBus, DOMAIN_EVENTS } = require("../shared/domain-events");
-const { AppError, ValidationError, ConflictError, NotFoundError } = require("../../../common/errors");
+const {
+  AppError,
+  ValidationError,
+  ConflictError,
+  NotFoundError,
+  ForbiddenError,
+} = require("../../../common/errors");
+
+const mapManualProvider = (paymentMethodLabel) => {
+  const m = String(paymentMethodLabel || "").toLowerCase();
+  if (m.includes("telebirr")) return "telebirr";
+  if (m.includes("visa") || m.includes("master") || m.includes("card")) return "visa";
+  if (m.includes("cbe")) return "cbe";
+  return null;
+};
+
+const buildParkingBreakdown = (session) => {
+  const securedAt = session?.securedAt;
+  const closedAt = session?.closedAt;
+  let hours = null;
+  if (securedAt && closedAt) {
+    const ms = Math.max(0, new Date(closedAt).getTime() - new Date(securedAt).getTime());
+    hours = Number((ms / (1000 * 60 * 60)).toFixed(4));
+  }
+  const mult =
+    session?.appliedHourlyRateEtb != null && Number.isFinite(Number(session.appliedHourlyRateEtb))
+      ? Number(session.appliedHourlyRateEtb)
+      : null;
+  const base =
+    session?.parkingFeeEtb != null && Number.isFinite(Number(session.parkingFeeEtb))
+      ? Number(Number(session.parkingFeeEtb).toFixed(2))
+      : null;
+  return {
+    baseFee: base,
+    overstayFee: 0,
+    hours,
+    multiplier: mult,
+  };
+};
 
 class TransactionError extends AppError {
   constructor(message, statusCode = 400) {
@@ -32,11 +70,11 @@ class TransactionService {
     }
 
     const session = await ParkingSession.findById(sessionId)
-      .select("driverId state parkingFeeEtb")
+      .select("driverId state parkingFeeEtb securedAt closedAt appliedHourlyRateEtb")
       .lean();
     if (!session) throw new NotFoundError("Session not found.");
     if (String(session.driverId) !== String(user.userId)) {
-      throw new TransactionError("You can only create transactions for your own sessions.", 403);
+      throw new ForbiddenError("You can only create transactions for your own sessions.");
     }
 
     if (
@@ -133,17 +171,27 @@ class TransactionService {
         : isParkingFee
           ? { type: "parking_fee" }
           : {};
+      const breakdown = isParkingFee ? buildParkingBreakdown(session) : null;
       const created = await Transaction.create({
         sessionId,
         driverId: user.userId,
         amount,
-        method: paymentMethod,
+        currency: "ETB",
+        method: "manual",
+        provider: mapManualProvider(paymentMethod),
+        breakdown,
         status: "success",
         providerRef: null,
         idempotencyKey,
         metadata,
         completedAt: now,
       });
+
+      if (isParkingFee) {
+        await ParkingSession.findByIdAndUpdate(sessionId, {
+          $set: { exitAllowed: true, paymentStatus: "paid" },
+        });
+      }
 
       domainEventBus.emitEvent(
         DOMAIN_EVENTS.TRANSACTION_COMPLETED,
@@ -228,6 +276,9 @@ class TransactionService {
       amount,
       currency = "ETB",
       method,
+      provider = null,
+      breakdown = null,
+      expiresAt = null,
       providerRef = null,
       idempotencyKey,
       metadata = {},
@@ -278,6 +329,9 @@ class TransactionService {
         amount,
         currency,
         method,
+        provider,
+        breakdown,
+        expiresAt,
         providerRef,
         idempotencyKey,
         metadata,
@@ -397,6 +451,13 @@ class TransactionService {
       }, {
         eventId: `transaction-completed:${String(updated._id)}:${updated.__v}`,
       });
+
+      const merged = { ...transaction.metadata, ...metadata };
+      if (merged?.type === "parking_fee") {
+        await ParkingSession.findByIdAndUpdate(updated.sessionId, {
+          $set: { exitAllowed: true, paymentStatus: "paid" },
+        });
+      }
     }
 
     return updated;

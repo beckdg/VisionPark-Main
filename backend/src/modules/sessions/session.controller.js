@@ -50,6 +50,14 @@ const closeSession = async (req, res, next) => {
       sessionId: req.params.sessionId,
       idempotencyKey: req.body.idempotencyKey,
       closeReason: req.body.closeReason,
+      actor: req.user
+        ? {
+            userId: req.user.userId,
+            role: req.user.role,
+            bypassExitPayment: Boolean(req.body?.bypassExitPayment),
+            bypassReason: req.body?.bypassReason,
+          }
+        : null,
     });
     return res.status(200).json(session);
   } catch (error) {
@@ -90,6 +98,38 @@ const getMySessions = async (req, res, next) => {
   }
 };
 
+const getExitEligibility = async (req, res, next) => {
+  try {
+    const data = await sessionService.getExitEligibilitySnapshot(req.params.sessionId);
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const validatePhysicalExit = async (req, res, next) => {
+  try {
+    await sessionService.assertPhysicalExitAllowed(req.params.sessionId);
+    return res.status(200).json({ success: true, data: { allowed: true } });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const postExitOverride = async (req, res, next) => {
+  try {
+    const session = await sessionService.allowExitOverride({
+      sessionId: req.params.sessionId,
+      userId: req.user.userId,
+      role: req.user.role,
+      reason: req.body?.reason,
+    });
+    return res.status(200).json({ success: true, data: session });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 module.exports = {
   createReservation,
   secureSession,
@@ -98,4 +138,7 @@ module.exports = {
   getSessionById,
   getMyActiveSession,
   getMySessions,
+  getExitEligibility,
+  validatePhysicalExit,
+  postExitOverride,
 };
