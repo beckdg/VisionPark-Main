@@ -8,33 +8,22 @@ import {
 import { useTheme } from "../../context/ThemeContext";
 import { Header } from "../../components/layout/Header";
 import { useNavigate } from "react-router-dom";
+import { apiClient } from "../../api/apiClient";
+import { useAuth } from "../../context/AuthContext";
 
 const DEFAULT_LOC = [9.0249, 38.7468]; // Addis Ababa Center
 const PAYMENT_OPTIONS = ["Telebirr", "CBE", "COOP", "Bank of Abyssinia"];
-
-const generateSpots = () => [
-  { id: "V-08", status: "Free", floor: "B1", deposit: 100, vehicleType: "Public Transport Vehicles | Upto 12 Seats" },
-  { id: "A-02", status: "Free", floor: "Ground", deposit: 100, vehicleType: "Dry Freight Vehicles | <35 Quintal" },
-  { id: "B-01", status: "Secured", floor: "Level 1", deposit: 100, vehicleType: "Public Transport Vehicles | Upto 12 Seats" },
-];
-
-// --- EXPANDED NATIONAL DATABASE (With Spots included) ---
-const INITIAL_AREAS = [
-  { id: "PA-01", region: "Addis Ababa", name: "Megenagna SMART", lat: 9.0206, lon: 38.7996, price: 35.0, availableSpaces: 17, spots: generateSpots() },
-  { id: "PA-02", region: "Addis Ababa", name: "Meskel Square", lat: 9.0104, lon: 38.7611, price: 35.0, availableSpaces: 24, spots: generateSpots() },
-  { id: "PA-03", region: "Addis Ababa", name: "Bole Int. Airport", lat: 8.9837, lon: 38.7963, price: 50.0, availableSpaces: 112, spots: generateSpots() },
-  { id: "PA-04", region: "Addis Ababa", name: "Edna Mall", lat: 8.9971, lon: 38.7866, price: 40.0, availableSpaces: 5, spots: generateSpots() },
-  { id: "PA-05", region: "Addis Ababa", name: "Dembel City Center", lat: 9.0049, lon: 38.7668, price: 30.0, availableSpaces: 41, spots: generateSpots() },
-  { id: "PA-DD1", region: "Dire Dawa", name: "Dire Dawa Train Station", lat: 9.5931, lon: 41.8591, price: 25.0, availableSpaces: 45, spots: generateSpots() },
-  { id: "PA-DD2", region: "Dire Dawa", name: "Ashawa Market Parking", lat: 9.6001, lon: 41.8500, price: 20.0, availableSpaces: 12, spots: generateSpots() },
-  { id: "PA-OR1", region: "Oromia", name: "Adama Bus Terminal", lat: 8.5414, lon: 39.2689, price: 25.0, availableSpaces: 30, spots: generateSpots() },
-  { id: "PA-OR2", region: "Oromia", name: "Adama Post Office", lat: 8.5480, lon: 39.2740, price: 20.0, availableSpaces: 8, spots: generateSpots() },
-  { id: "PA-AM1", region: "Amhara", name: "Lake Tana Shore Parking", lat: 11.5940, lon: 37.3875, price: 30.0, availableSpaces: 50, spots: generateSpots() },
-  { id: "PA-TG1", region: "Tigray", name: "Romanat Square", lat: 13.4967, lon: 39.4753, price: 20.0, availableSpaces: 22, spots: generateSpots() },
-  { id: "PA-SM1", region: "Somali", name: "Jigjiga City Center", lat: 9.3541, lon: 42.7956, price: 15.0, availableSpaces: 60, spots: generateSpots() },
-  { id: "PA-SD1", region: "Sidama", name: "Piassa Hawassa", lat: 7.0504, lon: 38.4690, price: 25.0, availableSpaces: 18, spots: generateSpots() },
-  { id: "PA-SD2", region: "Sidama", name: "Hawassa Lake View", lat: 7.0450, lon: 38.4600, price: 35.0, availableSpaces: 40, spots: generateSpots() },
-];
+const normalizeRegionId = (region) => {
+  const val = String(region || "").trim().toLowerCase();
+  if (val.includes("addis")) return "Addis Ababa";
+  if (val.includes("dire")) return "Dire Dawa";
+  if (val.includes("oromia")) return "Oromia";
+  if (val.includes("amhara")) return "Amhara";
+  if (val.includes("tigray")) return "Tigray";
+  if (val.includes("somali")) return "Somali";
+  if (val.includes("sidama")) return "Sidama";
+  return "Addis Ababa";
+};
 
 const REGIONS = [
   { id: "Addis Ababa", label: "Addis Ababa", group: "FEDERAL", center: [9.0249, 38.7468] },
@@ -144,10 +133,12 @@ const ParkingMap = memo(({ areas, focusedAreaId, tileUrl, onMarkerClick, userLoc
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function DriverMap() {
   const { theme, setTheme } = useTheme();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   const [userLocation, setUserLocation] = useState(DEFAULT_LOC);
   const [selectedRegion, setSelectedRegion] = useState("ALL");
+  const [allAreas, setAllAreas] = useState([]);
   const [areas, setAreas] = useState([]);
   const [focusedAreaId, setFocusedAreaId] = useState(null);
 
@@ -158,8 +149,8 @@ export default function DriverMap() {
   const [isRegionMenuOpen, setIsRegionMenuOpen] = useState(false);
   const [pendingMapRoute, setPendingMapRoute] = useState(null);
 
-  const driverVehicle = localStorage.getItem("vp_driver_vehicle") || "Public Transport Vehicles | Upto 12 Seats";
-  const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem("vp_driver_payment") || "Telebirr");
+  const driverVehicle = user?.driver?.vehicleType || user?.driverProfile?.vehicleType || "Public Transport Vehicles | Upto 12 Seats";
+  const [paymentMethod, setPaymentMethod] = useState("Telebirr");
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentTimestamp, setPaymentTimestamp] = useState(null);
 
@@ -226,11 +217,106 @@ export default function DriverMap() {
     }
   }, []);
 
+  // Load parking lots + spots from backend (source of truth)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const lots = await apiClient.get("/parking/lots");
+        const mappedLots = Array.isArray(lots)
+          ? lots.map((lot) => ({
+              id: String(lot._id),
+              _id: String(lot._id),
+              region: normalizeRegionId(lot.region),
+              name: lot.name || "Unnamed Parking",
+              lat: lot?.location?.coordinates?.[1] ?? DEFAULT_LOC[0],
+              lon: lot?.location?.coordinates?.[0] ?? DEFAULT_LOC[1],
+              price: 35.0,
+              availableSpaces: 0,
+              spots: [],
+            }))
+          : [];
+
+        // Preferred API from prompt
+        let allSpots = [];
+        try {
+          const spots = await apiClient.get("/parking/spots");
+          allSpots = Array.isArray(spots) ? spots : [];
+        } catch {
+          // Fallback: backend may require zoneId, so hydrate through zones.
+          const zonedSpots = [];
+          for (const lot of mappedLots) {
+            try {
+              const zones = await apiClient.get(`/parking/zones?lotId=${lot._id}`);
+              if (!Array.isArray(zones)) continue;
+              for (const zone of zones) {
+                try {
+                  const zoneSpots = await apiClient.get(`/parking/spots?zoneId=${zone._id}`);
+                  if (Array.isArray(zoneSpots)) zonedSpots.push(...zoneSpots);
+                } catch {
+                  // skip zone on error
+                }
+              }
+            } catch {
+              // skip lot on error
+            }
+          }
+          allSpots = zonedSpots;
+        }
+
+        const spotsByLot = allSpots.reduce((acc, spot) => {
+          const lotId = String(spot?.lotId || "");
+          if (!acc[lotId]) acc[lotId] = [];
+          acc[lotId].push({
+            id: String(spot?.spotCode || spot?._id || ""),
+            _id: String(spot?._id || ""),
+            lotId: String(spot?.lotId || ""),
+            zoneId: String(spot?.zoneId || ""),
+            status: String(spot?.status || "free").toLowerCase(),
+            floor: "Ground",
+            deposit: 100,
+            allowedCategories:
+              Array.isArray(spot?.allowedCategories) && spot.allowedCategories.length > 0
+                ? spot.allowedCategories
+                : ["Public Transport Vehicles | Upto 12 Seats"],
+            vehicleType:
+              Array.isArray(spot?.allowedCategories) && spot.allowedCategories.length > 0
+                ? spot.allowedCategories[0]
+                : "Public Transport Vehicles | Upto 12 Seats",
+          });
+          return acc;
+        }, {});
+
+        const hydrated = mappedLots.map((lot) => {
+          const lotSpots = spotsByLot[lot._id] || [];
+          return {
+            ...lot,
+            spots: lotSpots,
+            availableSpaces: lotSpots.filter((s) => s.status === "free").length,
+          };
+        });
+
+        if (!cancelled) setAllAreas(hydrated);
+      } catch (error) {
+        if (!cancelled) {
+          setAllAreas([]);
+          setAreas([]);
+          setFocusedAreaId(null);
+          showToast(error?.message || "Failed to load parking data.", "error");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Filter & Haversine Sorting logic
   useEffect(() => {
-    let filteredAreas = INITIAL_AREAS;
+    let filteredAreas = allAreas;
     if (selectedRegion !== "ALL") {
-      filteredAreas = INITIAL_AREAS.filter(area => area.region === selectedRegion);
+      filteredAreas = allAreas.filter(area => area.region === selectedRegion);
       const sorted = filteredAreas.map((area) => {
         const dist = mockHaversineDistance(userLocation[0], userLocation[1], area.lat, area.lon);
         return { ...area, distance: dist };
@@ -240,10 +326,16 @@ export default function DriverMap() {
       if (sorted.length > 0) setFocusedAreaId(sorted[0].id);
       else setFocusedAreaId(null);
     } else {
-      setAreas(INITIAL_AREAS);
-      setFocusedAreaId(null);
+      const national = allAreas.map((area) => ({
+          ...area,
+          distance: mockHaversineDistance(userLocation[0], userLocation[1], area.lat, area.lon),
+      }));
+      setAreas(national);
+      setFocusedAreaId(national[0]?.id || null);
+      setSelectedArea(null);
+      setSelectedSpot(null);
     }
-  }, [userLocation, selectedRegion]);
+  }, [userLocation, selectedRegion, allAreas]);
 
   const handleRegionChange = (val) => {
     setSelectedRegion(val);
@@ -347,28 +439,56 @@ export default function DriverMap() {
     if (d < -50) handlePrev();
   };
 
-  const updateSpotStatus = (areaId, spotId, newStatus) => {
-    setAreas(prev => prev.map(area =>
-      area.id !== areaId ? area :
-        { ...area, spots: area.spots.map(s => s.id === spotId ? { ...s, status: newStatus } : s) }
-    ));
-  };
+  const handleProcessPayment = async () => {
+    if (!user?._id || !selectedSpot?._id) {
+      showToast("Missing driver or selected spot.", "error");
+      return;
+    }
+    try {
+      const timestamp = new Date().toLocaleString();
+      let session;
+      try {
+        session = await apiClient.post("/sessions/reservations", {
+          driverId: user._id,
+          spotId: selectedSpot._id,
+        });
+      } catch (firstError) {
+        session = await apiClient.post("/sessions/reservations", {
+          driverId: user._id,
+          lotId: selectedSpot.lotId,
+          zoneId: selectedSpot.zoneId,
+          spotId: selectedSpot._id,
+          expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        });
+      }
+      await apiClient.post("/operations/transactions", {
+        sessionId: session?._id,
+        amount: 100,
+        method: paymentMethod,
+        paymentMethod,
+        status: "completed",
+        type: "reservation_fee",
+      });
+      setPaymentTimestamp(timestamp);
+      setUiState("PaymentSuccess");
 
-  const handleProcessPayment = () => {
-    const timestamp = new Date().toLocaleString();
-    const endTime = Date.now() + 15 * 60 * 1000;
-    localStorage.setItem("vp_session_state", "Reserved");
-    localStorage.setItem("vp_selected_area", JSON.stringify(selectedArea));
-    localStorage.setItem("vp_selected_spot", JSON.stringify(selectedSpot));
-    localStorage.setItem("vp_session_end_time", endTime.toString());
-    localStorage.setItem("vp_session_start_time", Date.now().toString());
-    localStorage.setItem("vp_payment_timestamp", timestamp);
-    localStorage.setItem("vp_driver_payment", paymentMethod);
-    setPaymentTimestamp(timestamp);
-    setUiState("PaymentSuccess");
-    updateSpotStatus(selectedArea.id, selectedSpot.id, "Reserved");
-    window.dispatchEvent(new Event("vp_session_changed"));
-    setTimeout(() => navigate("/driver/session"), 2500);
+      setTimeout(
+        () =>
+          navigate("/driver/session", {
+            state: {
+              session,
+              areaData: selectedArea,
+              spotData: selectedSpot,
+              paymentMethod,
+              paymentTimestamp: timestamp,
+            },
+          }),
+        1200
+      );
+    } catch (error) {
+      const msg = error?.message || "Reservation failed.";
+      showToast(msg, "error");
+    }
   };
 
   const confirmOpenGoogleMaps = () => {
@@ -379,9 +499,10 @@ export default function DriverMap() {
   };
 
   const getStatusColor = (status) => {
-    if (status === "Free") return "text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
-    if (status === "Reserved") return "text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10";
-    if (status === "Secured") return "text-red-600 dark:text-red-400 border-red-500/30 bg-red-500/10";
+    if (status === "free") return "text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10";
+    if (status === "reserved") return "text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10";
+    if (status === "occupied") return "text-red-600 dark:text-red-400 border-red-500/30 bg-red-500/10";
+    if (status === "blocked") return "text-zinc-600 dark:text-zinc-300 border-zinc-500/30 bg-zinc-500/10";
     return "";
   };
 
@@ -621,8 +742,11 @@ export default function DriverMap() {
 
             <div className="p-5 md:p-6 overflow-y-auto overscroll-contain flex-1 flex flex-col gap-3 custom-scrollbar">
               {selectedArea.spots.map((spot) => {
-                const isCompatible = spot.vehicleType === driverVehicle;
-                const canSelect = isCompatible && spot.status === "Free";
+                const allowed = Array.isArray(spot.allowedCategories) && spot.allowedCategories.length > 0
+                  ? spot.allowedCategories
+                  : [spot.vehicleType];
+                const isCompatible = allowed.includes(driverVehicle);
+                const canSelect = isCompatible && spot.status === "free";
                 return (
                   <div
                     key={spot.id}
@@ -668,13 +792,13 @@ export default function DriverMap() {
                   <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider mb-1">Deposit</p>
                   <p className="text-zinc-900 dark:text-white font-bold text-lg">{selectedSpot.deposit} ETB</p>
                 </div>
-                <div className="bg-zinc-100 dark:bg-black/40 rounded-xl p-4 border border-zinc-200 dark:border-white/5">
-                  <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider mb-1">Floor</p>
-                  <p className="text-zinc-900 dark:text-white font-bold text-lg">{selectedSpot.floor}</p>
-                </div>
               </div>
               <p className="text-xs text-zinc-600 dark:text-zinc-400 border-b border-zinc-200 dark:border-white/10 pb-6">
-                <span className="font-bold text-zinc-900 dark:text-zinc-300">Vehicle Type:</span> {selectedSpot.vehicleType}
+                <span className="font-bold text-zinc-900 dark:text-zinc-300">Vehicle Types:</span>{" "}
+                {(Array.isArray(selectedSpot.allowedCategories) && selectedSpot.allowedCategories.length > 0
+                  ? selectedSpot.allowedCategories
+                  : [selectedSpot.vehicleType]
+                ).join(", ")}
               </p>
               <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20">
                 <div>

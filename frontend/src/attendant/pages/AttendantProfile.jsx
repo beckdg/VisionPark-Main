@@ -1,32 +1,142 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
     User, Mail, Phone, MapPin,
     ShieldCheck, Clock, Building,
-    Lock, AlertCircle, Key, FileText
+    Lock, AlertCircle, Key, FileText, Camera
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
+import { useAuth } from "../../context/AuthContext";
 
-// --- MOCK DATA (Inherited from Owner's AttendantManagement) ---
-const ATTENDANT_DATA = {
-    id: "OP-4092",
-    name: "Kebede Alemu",
-    email: "kebede.visionpark@gmail.com",
-    phone: "+251 911 234 567",
-    faydaId: "1234 5678 9012 3456",
-    // Formatted strictly as: Branch Name, District, City, Region (No abbreviations)
-    address: "Bole Airport Parking, Kebele 03, Addis Ababa, Addis Ababa",
-    branch: "Bole Airport Parking",
-    shiftStart: "06:00 AM",
-    shiftEnd: "02:00 PM",
-    status: "Active",
-    avatar: "https://i.pravatar.cc/150?u=kebede"
-};
+const FALLBACK_AVATAR = "https://i.pravatar.cc/150?u=attendant";
+const PLACEHOLDER = "Not available";
 
 export default function AttendantProfile() {
+    const auth = useAuth();
+    const avatarInputRef = useRef(null);
     const [toastMessage, setToastMessage] = useState("");
+    const [profile, setProfile] = useState(null);
+    const [avatarUploading, setAvatarUploading] = useState(false);
 
     const showToast = () => {
         setToastMessage("Please contact your Parking Lot Owner to request changes to your profile.");
         setTimeout(() => setToastMessage(""), 4000);
+    };
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const fetchProfile = async () => {
+            try {
+                const me = await apiClient.get("/auth/me");
+                const lots = await apiClient.get("/parking/lots");
+                const lotRows = Array.isArray(lots) ? lots : [];
+
+                const attendantProfile = me?.attendantProfile || me?.attendant || {};
+                const assignedLotId = attendantProfile?.lotId || attendantProfile?.branchId || null;
+                const assignedLot = lotRows.find((lot) => String(lot?._id) === String(assignedLotId));
+
+                const branchAddressParts = [
+                    assignedLot?.name,
+                    assignedLot?.address,
+                    assignedLot?.city,
+                    assignedLot?.region,
+                ].filter(Boolean);
+
+                const nextProfile = {
+                    id: me?._id || PLACEHOLDER,
+                    name: me?.name || PLACEHOLDER,
+                    email: me?.email || PLACEHOLDER,
+                    phone: attendantProfile?.phone || PLACEHOLDER,
+                    faydaId: attendantProfile?.faydaId || PLACEHOLDER,
+                    address: attendantProfile?.address || branchAddressParts.join(", ") || PLACEHOLDER,
+                    branch: assignedLot?.name || PLACEHOLDER,
+                    shiftStart: attendantProfile?.shiftStart || PLACEHOLDER,
+                    shiftEnd: attendantProfile?.shiftEnd || PLACEHOLDER,
+                    status: me?.status ? String(me.status).replace(/^./, (m) => m.toUpperCase()) : "Active",
+                    avatar: me?.avatarUrl || me?.profileImageUrl || FALLBACK_AVATAR,
+                    profileImagePublicId: me?.profileImagePublicId || null,
+                };
+
+                if (isMounted) {
+                    setProfile(nextProfile);
+                }
+            } catch {
+                if (isMounted) {
+                    setProfile({
+                        id: PLACEHOLDER,
+                        name: PLACEHOLDER,
+                        email: PLACEHOLDER,
+                        phone: PLACEHOLDER,
+                        faydaId: PLACEHOLDER,
+                        address: PLACEHOLDER,
+                        branch: PLACEHOLDER,
+                        shiftStart: PLACEHOLDER,
+                        shiftEnd: PLACEHOLDER,
+                        status: "Active",
+                        avatar: FALLBACK_AVATAR,
+                    });
+                }
+            }
+        };
+
+        fetchProfile();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    const attendantData = useMemo(
+        () =>
+            profile || {
+                id: PLACEHOLDER,
+                name: PLACEHOLDER,
+                email: PLACEHOLDER,
+                phone: PLACEHOLDER,
+                faydaId: PLACEHOLDER,
+                address: PLACEHOLDER,
+                branch: PLACEHOLDER,
+                shiftStart: PLACEHOLDER,
+                shiftEnd: PLACEHOLDER,
+                status: "Active",
+                avatar: FALLBACK_AVATAR,
+                profileImagePublicId: null,
+            },
+        [profile]
+    );
+
+    const handleAvatarSelected = async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = null;
+        if (!file) return;
+        const max = 10 * 1024 * 1024;
+        if (file.size > max) {
+            setToastMessage("Photo must be 10MB or smaller (JPEG, PNG, or WebP).");
+            setTimeout(() => setToastMessage(""), 5000);
+            return;
+        }
+        setAvatarUploading(true);
+        try {
+            const fd = new FormData();
+            fd.append("image", file);
+            const res = await apiClient.postFormData("/uploads/profile-image", fd);
+            if (typeof auth.refreshMe === "function") {
+                await auth.refreshMe();
+            }
+            setProfile((prev) =>
+                prev
+                    ? {
+                        ...prev,
+                        avatar: res?.url || prev.avatar,
+                        profileImagePublicId: res?.publicId || null,
+                    }
+                    : prev
+            );
+        } catch {
+            setToastMessage("Photo upload failed. Try again or contact your owner.");
+            setTimeout(() => setToastMessage(""), 5000);
+        } finally {
+            setAvatarUploading(false);
+        }
     };
 
     // --- REUSABLE READ-ONLY FIELD (Fully Responsive, No Truncation) ---
@@ -62,8 +172,10 @@ export default function AttendantProfile() {
                     <h1 className="text-2xl md:text-3xl font-black text-zinc-900 dark:text-white tracking-tight">My Profile</h1>
                     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 break-words">View your assigned identity, contact details, and shift schedule.</p>
                 </div>
-                <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 rounded-xl text-zinc-600 dark:text-zinc-400 font-bold text-xs md:text-sm shrink-0 w-fit">
-                    <Lock className="h-4 w-4 shrink-0" /> <span className="break-words">Profile is Read-Only</span>
+                <div className="flex flex-col items-end gap-2 shrink-0">
+                    <div className="flex items-center gap-2 px-4 py-2 bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10 rounded-xl text-zinc-600 dark:text-zinc-400 font-bold text-xs md:text-sm w-fit">
+                        <Lock className="h-4 w-4 shrink-0" /> <span className="break-words">Details read-only</span>
+                    </div>
                 </div>
             </div>
 
@@ -77,27 +189,43 @@ export default function AttendantProfile() {
 
                             {/* Avatar & Status */}
                             <div className="flex flex-col items-center gap-4 shrink-0 w-full lg:w-auto">
+                                <input
+                                    ref={avatarInputRef}
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    className="hidden"
+                                    onChange={handleAvatarSelected}
+                                />
                                 <div className="h-32 w-32 rounded-full overflow-hidden border-4 border-emerald-50 dark:border-emerald-500/20 shadow-xl bg-zinc-100 dark:bg-white/5 relative shrink-0">
-                                    <img src={ATTENDANT_DATA.avatar} alt="Profile" className="h-full w-full object-cover" />
+                                    <img src={attendantData.avatar} alt="Profile" className="h-full w-full object-cover" />
                                 </div>
+                                <button
+                                    type="button"
+                                    disabled={avatarUploading}
+                                    onClick={() => avatarInputRef.current?.click()}
+                                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-black uppercase tracking-widest shadow-sm outline-none cursor-pointer"
+                                >
+                                    <Camera className="h-4 w-4 shrink-0" />
+                                    {avatarUploading ? "Uploading…" : "Update photo"}
+                                </button>
                                 <div className="flex flex-col items-center text-center">
-                                    <span className="text-xl font-black text-zinc-900 dark:text-white break-words px-2">{ATTENDANT_DATA.name}</span>
-                                    <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest mt-1">ID: {ATTENDANT_DATA.id}</span>
+                                    <span className="text-xl font-black text-zinc-900 dark:text-white break-words px-2">{attendantData.name}</span>
+                                    <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest mt-1">ID: {attendantData.id}</span>
                                 </div>
                                 <span className="inline-flex items-center px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-500/20 text-xs font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest border border-emerald-200 dark:border-emerald-500/30">
-                                    <ShieldCheck className="h-4 w-4 mr-1.5 shrink-0" /> {ATTENDANT_DATA.status}
+                                    <ShieldCheck className="h-4 w-4 mr-1.5 shrink-0" /> {attendantData.status}
                                 </span>
                             </div>
 
                             {/* Contact Details */}
                             <div className="flex-1 w-full grid grid-cols-1 sm:grid-cols-2 gap-5">
                                 <div className="sm:col-span-2">
-                                    <ReadOnlyField icon={Mail} label="Email Address" value={ATTENDANT_DATA.email} />
+                                    <ReadOnlyField icon={Mail} label="Email Address" value={attendantData.email} />
                                 </div>
-                                <ReadOnlyField icon={Phone} label="Phone Number" value={ATTENDANT_DATA.phone} isMono={true} />
-                                <ReadOnlyField icon={FileText} label="Fayda National ID" value={ATTENDANT_DATA.faydaId} isMono={true} />
+                                <ReadOnlyField icon={Phone} label="Phone Number" value={attendantData.phone} isMono={true} />
+                                <ReadOnlyField icon={FileText} label="Fayda National ID" value={attendantData.faydaId} isMono={true} />
                                 <div className="sm:col-span-2">
-                                    <ReadOnlyField icon={MapPin} label="Physical Address" value={ATTENDANT_DATA.address} />
+                                    <ReadOnlyField icon={MapPin} label="Physical Address" value={attendantData.address} />
                                 </div>
                             </div>
 
@@ -121,7 +249,7 @@ export default function AttendantProfile() {
                             <div className="space-y-5">
                                 <div>
                                     <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-200 dark:text-emerald-400/70 mb-1">Assigned Branch</p>
-                                    <p className="text-lg md:text-xl font-black text-white break-words leading-tight">{ATTENDANT_DATA.branch}</p>
+                                    <p className="text-lg md:text-xl font-black text-white break-words leading-tight">{attendantData.branch}</p>
                                 </div>
 
                                 <div className="bg-emerald-600/50 dark:bg-black/20 rounded-xl p-4 border border-emerald-400/30 dark:border-white/5">
@@ -129,10 +257,10 @@ export default function AttendantProfile() {
                                         <Clock className="h-3 w-3 shrink-0" /> Shift Timing
                                     </p>
                                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                                        <div className="text-white font-mono font-black break-words">{ATTENDANT_DATA.shiftStart}</div>
+                                        <div className="text-white font-mono font-black break-words">{attendantData.shiftStart}</div>
                                         <div className="hidden sm:block h-px flex-1 bg-emerald-400/30 dark:bg-emerald-500/30 mx-3"></div>
                                         <div className="sm:hidden text-emerald-200 text-xs font-bold text-center">TO</div>
-                                        <div className="text-white font-mono font-black break-words">{ATTENDANT_DATA.shiftEnd}</div>
+                                        <div className="text-white font-mono font-black break-words">{attendantData.shiftEnd}</div>
                                     </div>
                                 </div>
                             </div>

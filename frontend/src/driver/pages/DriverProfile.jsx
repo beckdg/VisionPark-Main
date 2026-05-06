@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Header } from "../../components/layout/Header";
-import { useTheme } from "../../context/ThemeContext";
 import { useScroll } from "../../context/ScrollContext";
+import { useAuth } from "../../context/AuthContext";
+import { apiClient } from "../../api/apiClient";
+import { resolveDriverProfilePhoto } from "../../utils/resolveDriverProfilePhoto";
 import {
   User, Car, CreditCard, Building2, Bell, HelpCircle,
   LogOut, Camera, ChevronRight, ChevronLeft, Fingerprint,
@@ -13,6 +15,7 @@ const PAYMENT_OPTIONS = ["Telebirr", "CBE", "COOP", "Bank of Abyssinia"];
 
 export default function DriverProfile() {
   const navigate = useNavigate();
+  const auth = useAuth();
   const { setScrolled } = useScroll();
 
   const galleryInputRef = useRef(null);
@@ -26,24 +29,66 @@ export default function DriverProfile() {
   const [showLiveCamera, setShowLiveCamera] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
 
-  // Data pulls from LocalStorage on mount
-  const [userName, setUserName] = useState(() => localStorage.getItem("vp_driver_name") || "Abebe Kebede");
-  const [userEmail, setUserEmail] = useState(() => localStorage.getItem("vp_driver_email") || "abebe.k@example.com");
-  const [userPhone, setUserPhone] = useState(() => localStorage.getItem("vp_driver_phone") || "+251 91 123 4567");
-  const [profilePhoto, setProfilePhoto] = useState(() => localStorage.getItem("vp_driver_photo") || null);
-  const [vehicleType] = useState(() => localStorage.getItem("vp_driver_vehicle") || "Public Transport Vehicles | Upto 12 Seats");
-  const [licensePlate] = useState(() => localStorage.getItem("vp_driver_license_plate") || "AA 0123456");
-  const [paymentMethod, setPaymentMethod] = useState(() => localStorage.getItem("vp_driver_payment") || "Telebirr");
-  const [accountNumber, setAccountNumber] = useState(() => localStorage.getItem("vp_driver_account") || "");
+  const [userName, setUserName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [userPhone, setUserPhone] = useState("");
+  const [profilePhoto, setProfilePhoto] = useState(null);
+  const [vehicleType, setVehicleType] = useState("");
+  const [licensePlate, setLicensePlate] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("Telebirr");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [paymentSaveError, setPaymentSaveError] = useState("");
+  const [savingPayment, setSavingPayment] = useState(false);
   const [notifications, setNotifications] = useState(true);
 
-  // Editable Form State
-  const [editForm, setEditForm] = useState({ name: userName, email: userEmail, phone: userPhone });
+  const [editForm, setEditForm] = useState({ name: "", email: "", phone: "" });
 
-  // Isolated Error States for perfect typing experience
   const [editNameError, setEditNameError] = useState("");
   const [editEmailError, setEditEmailError] = useState("");
   const [editPhoneError, setEditPhoneError] = useState("");
+
+  useEffect(() => {
+    if (!auth.isAuthenticated || auth.user?.role !== "driver") return;
+
+    const user = auth.user;
+    const showEdit = showEditProfile;
+    queueMicrotask(() => {
+      const d = user.driverProfile || user.driver;
+      const lsPhoto = localStorage.getItem("vp_driver_photo");
+      setProfilePhoto(resolveDriverProfilePhoto(user, lsPhoto));
+
+      setUserName(user.name || "");
+      setUserEmail(user.email || "");
+      setUserPhone((d?.phone && String(d.phone).trim()) || "");
+
+      setLicensePlate(
+        (d?.licensePlate && String(d.licensePlate).trim()) ||
+          localStorage.getItem("vp_driver_license_plate") ||
+          ""
+      );
+      setVehicleType(
+        (d?.vehicleType && String(d.vehicleType).trim()) ||
+          localStorage.getItem("vp_driver_vehicle") ||
+          ""
+      );
+
+    const pm = (d?.paymentMethod && String(d.paymentMethod).trim()) || "Telebirr";
+    setPaymentMethod(pm);
+    setAccountNumber(
+      d?.paymentAccount != null && String(d.paymentAccount).trim() !== ""
+        ? String(d.paymentAccount).trim()
+        : ""
+    );
+
+      if (!showEdit) {
+        setEditForm({
+          name: user.name || "",
+          email: user.email || "",
+          phone: (d?.phone && String(d.phone).trim()) || "",
+        });
+      }
+    });
+  }, [auth.isAuthenticated, auth.user, showEditProfile]);
 
   // --- 1. SMART NAME VALIDATION ---
   useEffect(() => {
@@ -218,7 +263,7 @@ export default function DriverProfile() {
         localStorage.setItem("vp_driver_photo", dataUrl);
         setProfilePhoto(dataUrl);
         window.dispatchEvent(new Event("vp_photo_updated"));
-      } catch (e) {
+      } catch {
         alert("Photo is too large to save in local demo storage.");
       }
 
@@ -235,63 +280,118 @@ export default function DriverProfile() {
   }, []);
 
   // --- GALLERY UPLOAD LOGIC ---
-  const handleGalleryUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const img = new Image();
-        img.src = reader.result;
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          const MAX_WIDTH = 800;
-          const scaleSize = MAX_WIDTH / img.width;
-          canvas.width = MAX_WIDTH;
-          canvas.height = img.height * scaleSize;
+  const handleGalleryUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = null;
+    if (!file) return;
 
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-          const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.7);
-
-          try {
-            localStorage.setItem("vp_driver_photo", compressedDataUrl);
-            setProfilePhoto(compressedDataUrl);
-            window.dispatchEvent(new Event("vp_photo_updated"));
-          } catch (err) {
-            alert("File is too large to save.");
-          }
-          setShowPhotoModal(false);
+    if (auth.isAuthenticated && auth.user?.role === "driver") {
+      const max = 10 * 1024 * 1024;
+      if (file.size > max) {
+        alert("Image must be 10MB or smaller.");
+        setShowPhotoModal(false);
+        return;
+      }
+      try {
+        const fd = new FormData();
+        fd.append("image", file);
+        const res = await apiClient.postFormData("/uploads/profile-image", fd);
+        const url = res?.url || null;
+        setProfilePhoto(url);
+        try {
+          if (url) localStorage.setItem("vp_driver_photo", url);
+        } catch {
+          /* storage quota — cloud URL still set in UI */
         }
-      };
-      reader.readAsDataURL(file);
+        window.dispatchEvent(new Event("vp_photo_updated"));
+        if (typeof auth.refreshMe === "function") {
+          await auth.refreshMe();
+        }
+      } catch (err) {
+        alert(err?.message || "Upload failed.");
+      }
+      setShowPhotoModal(false);
+      return;
     }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const img = new Image();
+      img.src = reader.result;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_WIDTH = 800;
+        const scaleSize = MAX_WIDTH / img.width;
+        canvas.width = MAX_WIDTH;
+        canvas.height = img.height * scaleSize;
+
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.7);
+
+        try {
+          localStorage.setItem("vp_driver_photo", compressedDataUrl);
+          setProfilePhoto(compressedDataUrl);
+          window.dispatchEvent(new Event("vp_photo_updated"));
+        } catch {
+          alert("File is too large to save.");
+        }
+        setShowPhotoModal(false);
+      };
+    };
+    reader.readAsDataURL(file);
   };
 
-  const handleRemovePhoto = () => {
+  const handleRemovePhoto = async () => {
+    if (auth.isAuthenticated && auth.user?.role === "driver" && auth.user?.profileImagePublicId) {
+      try {
+        await apiClient.deleteWithBody("/uploads", { publicId: auth.user.profileImagePublicId });
+        if (typeof auth.refreshMe === "function") {
+          await auth.refreshMe();
+        }
+      } catch {
+        /* still clear local UI */
+      }
+    }
     setProfilePhoto(null);
     localStorage.removeItem("vp_driver_photo");
     window.dispatchEvent(new Event("vp_photo_updated"));
     setShowPhotoModal(false);
   };
 
-  const handlePaymentSave = () => {
-    localStorage.setItem("vp_driver_payment", paymentMethod);
-    if (paymentMethod !== "Telebirr") localStorage.setItem("vp_driver_account", accountNumber);
-    else { setAccountNumber(""); localStorage.removeItem("vp_driver_account"); }
-    setActiveView("main");
+  const handlePaymentSave = async () => {
+    if (paymentMethod !== "Telebirr" && !String(accountNumber).trim()) {
+      setPaymentSaveError("Enter your account number for this payment method.");
+      return;
+    }
+    if (!auth.isAuthenticated || auth.user?.role !== "driver") {
+      setPaymentSaveError("You must be signed in as a driver to save.");
+      return;
+    }
+    setPaymentSaveError("");
+    setSavingPayment(true);
+    try {
+      await apiClient.patch("/users/drivers/me", {
+        driver: {
+          paymentMethod,
+          paymentAccount: paymentMethod === "Telebirr" ? null : String(accountNumber).trim(),
+        },
+      });
+      if (paymentMethod === "Telebirr") setAccountNumber("");
+      if (typeof auth.refreshMe === "function") {
+        await auth.refreshMe();
+      }
+      setActiveView("main");
+    } catch (err) {
+      setPaymentSaveError(err?.message || "Could not save payment method.");
+    } finally {
+      setSavingPayment(false);
+    }
   };
 
   const handleLogout = () => {
-    Object.keys(localStorage).forEach(key => {
-      const persistentKeys = [
-        "vp_theme", "vp_driver_photo", "vp_driver_name", "vp_driver_email", "vp_driver_phone",
-        "vp_driver_vehicle", "vp_driver_license_plate", "vp_driver_payment", "vp_driver_account"
-      ];
-      if (key.startsWith("vp_") && !persistentKeys.includes(key)) {
-        localStorage.removeItem(key);
-      }
-    });
+    auth.logout();
     window.dispatchEvent(new Event("vp_photo_updated"));
     window.dispatchEvent(new Event("vp_profile_updated"));
     navigate("/login", { replace: true });
@@ -305,12 +405,31 @@ export default function DriverProfile() {
         <div className="auth-page flex-1 overflow-y-auto pt-24 px-4 md:px-8 pb-32 md:pb-40 transition-colors duration-500 overscroll-contain" onScroll={handleScroll}>
           <div className="w-full max-w-2xl lg:max-w-3xl mx-auto flex flex-col">
             <div className="flex items-center gap-4 mb-6 md:mb-8">
-              <button onClick={() => setActiveView("main")} className="h-10 w-10 md:h-12 md:w-12 flex items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white hover:bg-zinc-300 dark:hover:bg-zinc-700 transition outline-none cursor-pointer"><ChevronLeft className="h-6 w-6 md:h-7 md:w-7" /></button>
+              <button
+                type="button"
+                onClick={() => { setPaymentSaveError(""); setActiveView("main"); }}
+                className="h-10 w-10 md:h-12 md:w-12 flex items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white hover:bg-zinc-300 dark:hover:bg-zinc-700 transition outline-none cursor-pointer"
+              >
+                <ChevronLeft className="h-6 w-6 md:h-7 md:w-7" />
+              </button>
               <h2 className="text-2xl md:text-3xl font-bold text-zinc-900 dark:text-white">Payment Method</h2>
             </div>
+            {paymentSaveError ? (
+              <p className="text-sm font-medium text-red-600 dark:text-red-400 mb-4" role="alert">
+                {paymentSaveError}
+              </p>
+            ) : null}
             <div className="w-full bg-white dark:bg-[#121214]/95 rounded-2xl md:rounded-3xl shadow-sm border border-zinc-200 dark:border-white/5 overflow-hidden mb-6 md:mb-8">
               {PAYMENT_OPTIONS.map((method, index) => (
-                <button key={method} onClick={() => setPaymentMethod(method)} className={`w-full flex items-center justify-between p-4 md:p-6 text-left transition-colors outline-none cursor-pointer ${index !== PAYMENT_OPTIONS.length - 1 ? 'border-b border-zinc-100 dark:border-white/5' : ''} ${paymentMethod === method ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'hover:bg-zinc-50 dark:hover:bg-white/5'}`}>
+                <button
+                  key={method}
+                  type="button"
+                  onClick={() => {
+                    setPaymentSaveError("");
+                    setPaymentMethod(method);
+                  }}
+                  className={`w-full flex items-center justify-between p-4 md:p-6 text-left transition-colors outline-none cursor-pointer ${index !== PAYMENT_OPTIONS.length - 1 ? 'border-b border-zinc-100 dark:border-white/5' : ''} ${paymentMethod === method ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'hover:bg-zinc-50 dark:hover:bg-white/5'}`}
+                >
                   <span className={`text-sm md:text-base lg:text-lg ${paymentMethod === method ? 'font-bold text-emerald-600 dark:text-emerald-400' : 'font-medium text-zinc-700 dark:text-zinc-300'}`}>{method} {method === "Telebirr" && "(Default)"}</span>
                   {paymentMethod === method && <Check className="h-5 w-5 md:h-6 md:w-6 text-emerald-500 shrink-0" />}
                 </button>
@@ -322,8 +441,13 @@ export default function DriverProfile() {
                 <input type="text" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} placeholder="Enter your account number" className="w-full h-14 md:h-16 px-4 md:px-6 rounded-xl md:rounded-2xl bg-zinc-50 dark:bg-black/40 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white outline-none focus:border-emerald-500 focus:shadow-[0_0_15px_rgba(16,185,129,0.2)] transition-all duration-300 text-base md:text-lg lg:text-xl font-mono font-medium" />
               </div>
             )}
-            <button onClick={handlePaymentSave} className="w-full h-14 md:h-16 rounded-xl md:rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-sm md:text-base lg:text-lg tracking-wide uppercase shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] active:scale-[0.98] transition-all outline-none cursor-pointer">
-              Save & Return
+            <button
+              type="button"
+              onClick={handlePaymentSave}
+              disabled={savingPayment}
+              className="w-full h-14 md:h-16 rounded-xl md:rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-sm md:text-base lg:text-lg tracking-wide uppercase shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)] active:scale-[0.98] transition-all outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {savingPayment ? "Saving…" : "Save & Return"}
             </button>
           </div>
         </div>
@@ -360,22 +484,14 @@ export default function DriverProfile() {
                 <Edit2 className="h-4 w-4 md:h-5 md:w-5" />
               </button>
             </div>
-            <p className="text-sm md:text-base lg:text-lg text-zinc-500 dark:text-zinc-400 font-medium mt-1 md:mt-2 tracking-wide">{userPhone} • {userEmail}</p>
+            <p className="text-sm md:text-base lg:text-lg text-zinc-500 dark:text-zinc-400 font-medium mt-1 md:mt-2 tracking-wide">
+              {[userPhone, userEmail].filter(Boolean).join(" • ")}
+            </p>
           </div>
 
           <div className="flex flex-col gap-6 md:gap-8">
 
             {/* VISIONPARK WALLET CARD */}
-            <div className="w-full bg-gradient-to-br from-emerald-400 to-emerald-600 dark:from-emerald-500 dark:to-emerald-700 rounded-2xl md:rounded-3xl p-6 md:p-8 shadow-lg shadow-emerald-500/20 text-white flex justify-between items-center transform transition-transform hover:scale-[1.02]">
-              <div>
-                <p className="text-emerald-50 dark:text-emerald-100 text-[10px] md:text-xs lg:text-sm font-bold uppercase tracking-widest mb-1 md:mb-2">VisionPark Wallet</p>
-                <p className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">40.00 <span className="text-base md:text-lg lg:text-xl font-medium opacity-80">ETB</span></p>
-              </div>
-              <div className="h-12 w-12 md:h-14 md:w-14 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md shadow-inner">
-                <CreditCard className="h-6 w-6 md:h-7 md:w-7 text-white" />
-              </div>
-            </div>
-
             <div className="w-full bg-white dark:bg-[#121214]/95 rounded-2xl md:rounded-3xl shadow-sm border border-zinc-200 dark:border-white/5 overflow-hidden">
               <div className="flex items-center justify-between p-4 md:p-6 border-b border-zinc-100 dark:border-white/5">
                 <div className="flex items-center gap-4">
@@ -397,7 +513,14 @@ export default function DriverProfile() {
             </div>
 
             <div className="w-full bg-white dark:bg-[#121214]/95 rounded-2xl md:rounded-3xl shadow-sm border border-zinc-200 dark:border-white/5 overflow-hidden">
-              <button onClick={() => setActiveView("payment")} className="w-full flex items-center justify-between p-4 md:p-6 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors outline-none cursor-pointer">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentSaveError("");
+                  setActiveView("payment");
+                }}
+                className="w-full flex items-center justify-between p-4 md:p-6 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors outline-none cursor-pointer"
+              >
                 <div className="flex items-center gap-4">
                   <div className="h-9 w-9 md:h-12 md:w-12 rounded-xl bg-blue-500 flex items-center justify-center shrink-0 shadow-sm"><CreditCard className="h-5 w-5 md:h-6 md:w-6 text-white" /></div>
                   <span className="font-semibold text-zinc-900 dark:text-white text-sm md:text-base lg:text-lg">Payment Method</span>

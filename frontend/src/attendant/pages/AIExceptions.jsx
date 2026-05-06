@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
     AlertTriangle, Camera, Edit3, CheckCircle,
     Search, CarFront, Hash, Eye, AlertOctagon,
     ChevronRight, X, ShieldAlert, Clock, MapPin,
     ChevronDown, Check
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
 
 // --- VEHICLE OPTIONS (Imported from POS for consistency) ---
 const VEHICLE_OPTIONS = [
@@ -15,45 +16,8 @@ const VEHICLE_OPTIONS = [
     { group: "Machineries", items: ["Machineries | Upto 5000KG weight", "Machineries | 5001-10,000KG weight", "Machineries | Above 10,001KG weight"] }
 ];
 
-// --- MOCK EXCEPTION DATA ---
-const INITIAL_EXCEPTIONS = [
-    {
-        id: "EX-901",
-        type: "UNREADABLE_PLATE",
-        location: "Main Entry Gate",
-        time: "Just Now",
-        aiConfidence: "22%",
-        aiGuess: "UNKNOWN",
-        issue: "Plate obscured by mud or glare.",
-        image: "https://images.unsplash.com/photo-1600880292203-757bb62b4baf?auto=format&fit=crop&q=80&w=800",
-        status: "Pending"
-    },
-    {
-        id: "EX-902",
-        type: "EXIT_MISMATCH",
-        location: "Exit Gate B",
-        time: "4 mins ago",
-        aiConfidence: "78%",
-        aiGuess: "AA 11228",
-        issue: "AI read AA 11228, but no such vehicle is in the lot.",
-        image: "https://images.unsplash.com/photo-1511919884226-fd3cad34687c?auto=format&fit=crop&q=80&w=800",
-        status: "Pending"
-    },
-    {
-        id: "EX-903",
-        type: "CATEGORY_MISMATCH",
-        location: "Spot C12",
-        time: "15 mins ago",
-        aiConfidence: "65%",
-        aiGuess: "Light Vehicle",
-        issue: "Camera flagged vehicle size discrepancy. Please verify category.",
-        image: "https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&q=80&w=800",
-        status: "Pending"
-    }
-];
-
 export default function AIExceptions() {
-    const [exceptions, setExceptions] = useState(INITIAL_EXCEPTIONS);
+    const [exceptions, setExceptions] = useState([]);
     const [searchQuery, setSearchQuery] = useState("");
 
     // Resolution State
@@ -67,6 +31,15 @@ export default function AIExceptions() {
 
     const [isResolving, setIsResolving] = useState(false);
     const [toastMessage, setToastMessage] = useState("");
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const isFetchingRef = useRef(false);
+    const cancelledRef = useRef(false);
+
+    // Optional state placeholders (keeps UI unchanged while still tracking backend state).
+    void loading;
+    void error;
 
     const pendingCount = exceptions.filter(e => e.status === "Pending").length;
     const filteredExceptions = exceptions.filter(e =>
@@ -79,13 +52,48 @@ export default function AIExceptions() {
         setTimeout(() => setToastMessage(""), 4000);
     };
 
+    const fetchExceptions = async () => {
+        if (cancelledRef.current || isFetchingRef.current) return;
+        isFetchingRef.current = true;
+        try {
+            const data = await apiClient.get("/attendant/ai-exceptions?status=pending");
+            const rows = Array.isArray(data) ? data : [];
+            if (cancelledRef.current) return;
+            setExceptions(rows);
+            setError(null);
+        } catch (e) {
+            if (!cancelledRef.current) {
+                console.error("AIExceptions fetch failed:", e);
+                setError(e);
+                setExceptions([]);
+            }
+        } finally {
+            isFetchingRef.current = false;
+            if (!cancelledRef.current) {
+                setLoading(false);
+            }
+        }
+    };
+
+    useEffect(() => {
+        cancelledRef.current = false;
+        fetchExceptions();
+        const pollId = setInterval(fetchExceptions, 10000);
+
+        return () => {
+            cancelledRef.current = true;
+            clearInterval(pollId);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const openReviewModal = (exception) => {
         setSelectedException(exception);
         setManualPlate(exception.aiGuess === "UNKNOWN" ? "" : exception.aiGuess);
         setPlateError(false); // Reset error state on open
     };
 
-    const handleResolve = () => {
+    const handleResolve = async () => {
         // ✅ Inline Validation Check
         if (selectedException.type !== "CATEGORY_MISMATCH" && !manualPlate.trim()) {
             setPlateError(true);
@@ -94,13 +102,22 @@ export default function AIExceptions() {
 
         setPlateError(false);
         setIsResolving(true);
+        try {
+            const payload =
+                selectedException.type === "CATEGORY_MISMATCH"
+                    ? { correctedCategory }
+                    : { correctedPlate: manualPlate.trim() };
 
-        setTimeout(() => {
-            setExceptions(exceptions.filter(e => e.id !== selectedException.id));
-            setIsResolving(false);
+            await apiClient.post(`/attendant/ai-exceptions/${selectedException.id}/resolve`, payload);
+
+            setExceptions((prev) => prev.filter((e) => e.id !== selectedException.id));
             showToast(`Exception ${selectedException.id} successfully resolved. Database updated.`);
             setSelectedException(null);
-        }, 1000);
+        } catch (e) {
+            console.error("AIExceptions resolve failed:", e);
+        } finally {
+            setIsResolving(false);
+        }
     };
 
     // Helper for UI styling

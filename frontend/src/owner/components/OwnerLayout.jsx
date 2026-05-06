@@ -6,6 +6,7 @@ import {
   X, Bell, ChevronDown, LogOut, Moon, Sun, Car, PanelLeft
 } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
+import { useAuth } from "../../context/AuthContext";
 
 const NAVIGATION = [
   {
@@ -46,12 +47,10 @@ const NAVIGATION = [
 
 const ALL_NAV = NAVIGATION.flatMap(g => g.items);
 
-// ── Read the live owner profile from localStorage ─────────────────────────────
-const readOwnerProfile = () => {
-  // Attempt to parse the object saved by the System Admin (OwnerAccount.jsx)
-  // or by the Owner editing their own profile.
+// ── Read owner profile overrides from localStorage (avatar/local edits) ──────
+const readOwnerProfileOverrides = () => {
   const savedData = localStorage.getItem("vp_owner_data");
-  let parsedData = {};
+  let parsedData = null;
   if (savedData) {
     try {
       parsedData = JSON.parse(savedData);
@@ -59,12 +58,23 @@ const readOwnerProfile = () => {
       console.error("Failed to parse owner data", e);
     }
   }
+  return parsedData && typeof parsedData === "object" ? parsedData : {};
+};
 
+const buildOwnerViewModel = (authUser, overrides = {}) => {
+  const roleLabel = authUser?.role
+    ? `Parking ${String(authUser.role).charAt(0).toUpperCase()}${String(authUser.role).slice(1)}`
+    : "Parking Owner";
   return {
-    name: parsedData.name || "System Owner",
-    avatar: parsedData.avatar || "https://i.pravatar.cc/150?u=abel", // Fallback mock avatar
-    role: "Parking Owner",
-    unreadNotifications: 3
+    name: overrides?.name || authUser?.name || "Owner",
+    avatar:
+      overrides?.avatar ||
+      authUser?.avatarUrl ||
+      `https://i.pravatar.cc/150?u=${encodeURIComponent(
+        String(authUser?._id ?? authUser?.id ?? authUser?.email ?? "owner")
+      )}`,
+    role: roleLabel,
+    unreadNotifications: 3,
   };
 };
 
@@ -133,16 +143,17 @@ export default function OwnerLayout() {
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [hoveredNav, setHoveredNav] = useState(null);
 
-  // ── Live owner profile state ──────────────────────────────────────────────
-  const [owner, setOwner] = useState(readOwnerProfile);
+  const auth = useAuth();
+
+  // ── Live owner profile state (auth + local overrides) ─────────────────────
+  const [ownerOverrides, setOwnerOverrides] = useState(readOwnerProfileOverrides);
+  const owner = buildOwnerViewModel(auth.user, ownerOverrides);
   const [unreadCount, setUnreadCount] = useState(owner.unreadNotifications);
 
   useEffect(() => {
-    // Listen for the custom event dispatched by OwnerProfile after saving
-    const refresh = () => setOwner(readOwnerProfile());
+    // Listen for custom events emitted by owner profile/admin forms.
+    const refresh = () => setOwnerOverrides(readOwnerProfileOverrides());
     window.addEventListener("vp_owner_profile_updated", refresh);
-
-    // Also listen to the admin event, in case the admin updates the owner account
     window.addEventListener("vp_owner_data_updated", refresh);
 
     return () => {
@@ -166,7 +177,11 @@ export default function OwnerLayout() {
   }, [location.pathname]);
 
   const handleNavigation = (path) => { setHoveredNav(null); navigate(path); };
-  const handleLogout = () => { setIsProfileDropdownOpen(false); navigate("/login"); };
+  const handleLogout = () => {
+    auth.logout();
+    setIsProfileDropdownOpen(false);
+    navigate("/login", { replace: true });
+  };
   const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
   const handleNavHover = (e, name, isCollapsed) => {
     if (!isCollapsed) return;

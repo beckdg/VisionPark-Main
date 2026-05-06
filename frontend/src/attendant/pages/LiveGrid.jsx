@@ -1,70 +1,116 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
     CarFront, AlertTriangle, Clock, X, ShieldAlert,
     User, Smartphone, Video, MapPin, CheckCircle,
     Lock, Megaphone, Ban
 } from "lucide-react";
-
-// --- MOCK GRID DATA WITH SPECIFIC SCENARIOS ---
-const generateMockGrid = () => {
-    const spots = [];
-    const rows = ['A', 'B', 'C', 'D'];
-    const categories = ["Light Vehicle", "Public Transport | <12 Seats", "Motorcycle"];
-
-    rows.forEach(row => {
-        for (let i = 1; i <= 10; i++) {
-            const id = `${row}${i.toString().padStart(2, '0')}`;
-            let status = "Free";
-            let expectedDriver = null;
-            let isConflict = false;
-            let actualPlate = null;
-            let waitingToMove = false;
-
-            // FORCE SPECIFIC SCENARIOS FOR TESTING
-            if (id === 'A01') {
-                status = "Conflict";
-                isConflict = true;
-                expectedDriver = { name: "Dawit M.", eta: "8 mins", plate: "AA 12345" };
-                actualPlate = "UNKNOWN";
-            }
-            else if (id === 'A02') {
-                status = "Conflict";
-                isConflict = true;
-                expectedDriver = { name: "Sara T.", eta: "15 mins", plate: "OR 99887" };
-                actualPlate = "AA 45678";
-            }
-            // RANDOM FILL FOR THE REST
-            else {
-                const rand = Math.random();
-                if (rand > 0.85) {
-                    status = "Occupied";
-                    expectedDriver = { name: "Yonas B.", plate: `AA ${Math.floor(10000 + Math.random() * 90000)}`, phone: "+251 911 234 567", category: categories[0] };
-                    actualPlate = expectedDriver.plate;
-                } else if (rand > 0.70) {
-                    status = "Reserved";
-                    expectedDriver = { name: "Helen M.", plate: `OR ${Math.floor(10000 + Math.random() * 90000)}`, eta: "12 mins" };
-                }
-            }
-
-            spots.push({ id, status, isConflict, expectedDriver, actualPlate, waitingToMove, category: categories[Math.floor(Math.random() * categories.length)] });
-        }
-    });
-    return spots;
-};
-
-const INITIAL_GRID = generateMockGrid();
+import { apiClient } from "../../api/apiClient";
 
 export default function LiveGrid() {
-    const [spots, setSpots] = useState(INITIAL_GRID);
+    const [spots, setSpots] = useState([]);
+    const [branchName, setBranchName] = useState("Bole Premium Lot");
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [selectedSpot, setSelectedSpot] = useState(null);
     const [filter, setFilter] = useState("All");
     const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
 
     const [toastMessage, setToastMessage] = useState("");
 
+    const cancelledRef = useRef(false);
+    const isFetchingRef = useRef(false);
+    const didInitialFetchRef = useRef(false);
+
+    // Avoid eslint "unused vars" for optional loading/error states.
+    void loading;
+    void error;
+
+    const mapBackendSpotToUiSpot = (b) => {
+        const backendStatus = String(b?.status ?? "free").toLowerCase();
+
+        const uiStatus =
+            backendStatus === "free"
+                ? "Free"
+                : backendStatus === "reserved"
+                    ? "Reserved"
+                    : "Occupied"; // occupied|conflict -> UI Occupied
+
+        const reservation = b?.reservation
+            ? {
+                name: b?.reservation?.driverName ?? null,
+                eta: b?.reservation?.eta ?? null,
+                plate: b?.reservation?.plateNumber ?? null,
+                phone: b?.reservation?.phone ?? null,
+            }
+            : null;
+
+        return {
+            id: String(b?.id ?? ""),
+            branchName: b?.branchName ?? null,
+            status: uiStatus,
+            category: b?.category ?? null,
+            isConflict: Boolean(b?.isConflict),
+            expectedDriver: reservation,
+            actualPlate: b?.occupancy?.plateNumber ?? null,
+            waitingToMove: Boolean(b?.waitingToMove),
+        };
+    };
+
+    const fetchLiveGrid = async () => {
+        if (cancelledRef.current) return;
+        if (isFetchingRef.current) return;
+        isFetchingRef.current = true;
+
+        try {
+            const data = await apiClient.get(`/attendant/live-grid`);
+            const backendSpots = Array.isArray(data) ? data : [];
+            const mapped = backendSpots
+                .map(mapBackendSpotToUiSpot)
+                .filter((s) => s && s.id);
+
+            if (cancelledRef.current) return;
+            setSpots(mapped);
+            setBranchName(mapped[0]?.branchName || "Bole Premium Lot");
+            setSelectedSpot((prev) => {
+                if (!prev) return prev;
+                return mapped.find((s) => s.id === prev.id) ?? null;
+            });
+            setError(null);
+        } catch (e) {
+            if (!cancelledRef.current) {
+                console.error("LiveGrid live-grid fetch failed:", e);
+                setError(e);
+            }
+        } finally {
+            isFetchingRef.current = false;
+            if (!didInitialFetchRef.current) {
+                didInitialFetchRef.current = true;
+                setLoading(false);
+            }
+        }
+    };
+
     useEffect(() => {
         const timer = setInterval(() => setCurrentTime(new Date().toLocaleTimeString()), 1000);
         return () => clearInterval(timer);
+    }, []);
+
+    useEffect(() => {
+        cancelledRef.current = false;
+
+        const poll = async () => {
+            if (cancelledRef.current) return;
+            await fetchLiveGrid();
+        };
+
+        poll();
+        const intervalId = setInterval(poll, 5000);
+
+        return () => {
+            cancelledRef.current = true;
+            clearInterval(intervalId);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const freeSpotsList = spots.filter(s => s.status === "Free");
@@ -72,10 +118,21 @@ export default function LiveGrid() {
     // --- FUNCTIONALITY LOGIC --- //
 
     // Conflict: Instruct Squatter to Leave
-    const handleInstructToLeave = () => {
-        setSpots(spots.map(s => s.id === selectedSpot.id ? { ...s, waitingToMove: true } : s));
-        setSelectedSpot({ ...selectedSpot, waitingToMove: true });
-        showToast("Driver instructed to leave. System will auto-restore reservation upon departure.");
+    const handleInstructToLeave = async () => {
+        if (!selectedSpot) return;
+        try {
+            await apiClient.post(`/attendant/spots/${selectedSpot.id}/instruct-leave`);
+
+            // Optimistic UI update for immediate UX feedback.
+            setSpots((prev) => prev.map((s) => (s.id === selectedSpot.id ? { ...s, waitingToMove: true } : s)));
+            setSelectedSpot((prev) => (prev ? { ...prev, waitingToMove: true } : prev));
+            showToast("Driver instructed to leave. System will auto-restore reservation upon departure.");
+
+            // Refetch to ensure server truth.
+            fetchLiveGrid();
+        } catch (e) {
+            console.error("LiveGrid instruct-leave failed:", e);
+        }
     };
 
     const showToast = (msg) => {
@@ -109,7 +166,7 @@ export default function LiveGrid() {
                 <div className="p-4 md:p-6 border-b border-zinc-100 dark:border-white/5 flex flex-col xl:flex-row xl:items-center justify-between gap-4 shrink-0 bg-zinc-50 dark:bg-[#18181b]">
                     <div>
                         <h2 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                            <MapPin className="h-5 w-5 text-emerald-500" /> Bole Premium Lot
+                            <MapPin className="h-5 w-5 text-emerald-500" /> {branchName}
                         </h2>
                         <p className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 mt-1">Live AI capacity and visual spot monitoring.</p>
                     </div>

@@ -4,12 +4,14 @@
  * UX: Validates inputs on blur to avoid annoying the user while they are actively typing.
  */
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { 
   Users, Plus, Trash2, Edit2, Mail, Lock, 
   Phone, MapPin, X, Key, ShieldCheck, AlertCircle, 
   RefreshCw, Eye, EyeOff, UploadCloud, Check, ChevronDown, Clock, Sun, Moon, Sunrise
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
+import { useAuth } from "../../context/AuthContext";
 
 // --- REQUIRED DATA STRUCTURES FOR DROPDOWNS ---
 const REGION_GROUPS = [
@@ -23,25 +25,33 @@ const CITIES_BY_REGION = {
   "Tigray Region": ["Mekelle"], "Somali Region": ["Jigjiga"], "Sidama Region": ["Hawassa"]
 };
 
-const BRANCHES_BY_CITY = {
-  "Addis Ababa": ["Bole Airport Parking", "Piazza Street Parking", "Meskel Square Parking"],
-  "Adama": ["Adama Bus Terminal Parking", "Stadium Parking"],
-  "Dire Dawa": ["Dire Dawa Central Parking"],
-  "Bahir Dar": ["Bahir Dar Lake Parking"],
-  "Mekelle": ["Mekelle City Parking"],
-  "Jigjiga": ["Jigjiga Market Parking"],
-  "Hawassa": ["Hawassa Park & Ride"]
+const isValidObjectId = (id) => typeof id === "string" && /^[a-fA-F0-9]{24}$/.test(id);
+
+const formatFaydaForForm = (faydaId) => {
+  const digits = String(faydaId ?? "").replace(/\D/g, "").slice(0, 16);
+  return digits.match(/.{1,4}/g)?.join(" ") || "";
 };
 
-// --- MOCK DATA ---
-const INITIAL_ATTENDANTS = [
-  {
-    id: "att_01", name: "Kebede Alemu", email: "kebede.visionpark@gmail.com", phone: "+251 911 234 567",
-    faydaId: "1234 5678 9012 3456", address: "Bole, Addis Ababa", branch: "Bole Airport Parking",
-    shiftStart: "06:00 AM", shiftEnd: "02:00 PM", 
-    status: "Active", avatar: "https://i.pravatar.cc/150?u=kebede"
-  }
-];
+const formatPhoneForForm = (phone) => {
+  // Backend stores: +251 9XX XXX XXX (or similar). UI expects 9 digits only.
+  const digits = String(phone ?? "").replace(/\D/g, "");
+  const withoutCountry = digits.startsWith("251") ? digits.slice(3) : digits;
+  return withoutCountry.slice(0, 9);
+};
+
+const formatPhoneForBackend = (nineDigits) => {
+  const d = String(nineDigits ?? "").replace(/\D/g, "").slice(0, 9);
+  return `+251 ${d.substring(0, 3)} ${d.substring(3, 6)} ${d.substring(6, 9)}`;
+};
+
+const lotsMatchingCity = (lots, city) =>
+  lots.filter((l) => String(l.city || "").trim() === String(city || "").trim());
+
+/** Prefer lots whose DB city matches the form city; if none match (common with UI presets), list all owner lots. */
+const lotsForBranchSelect = (lots, city) => {
+  const matched = lotsMatchingCity(lots, city);
+  return matched.length > 0 ? matched : lots;
+};
 
 const DropdownTrigger = ({ label, value, onClick, disabled }) => (
   <div className="space-y-1.5 w-full min-w-0">
@@ -118,29 +128,111 @@ const getShiftLabel = (start, end) => {
 };
 
 export default function AttendantManagement() {
-  const [attendants, setAttendants] = useState(INITIAL_ATTENDANTS);
+  const { user } = useAuth();
+  const [attendants, setAttendants] = useState([]);
+  const [ownerLots, setOwnerLots] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingAttendant, setEditingAttendant] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
-  const [activeDropdown, setActiveDropdown] = useState(null); 
+  const [activeDropdown, setActiveDropdown] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "", email: "", phone: "", faydaId: "", address: "", password: "",
-    region: "Addis Ababa", city: "Addis Ababa", branch: "Bole Airport Parking",
+    region: "Addis Ababa", city: "Addis Ababa", branch: "", lotId: "",
     shiftStart: "06:00 AM", shiftEnd: "02:00 PM"
   });
 
   const [errors, setErrors] = useState({});
   const [avatarPreview, setAvatarPreview] = useState(null);
+  const [avatarFile, setAvatarFile] = useState(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [lots, attendantsResponse] = await Promise.all([
+          apiClient.get("/parking/lots"),
+          apiClient.get("/users/attendants/mine"),
+        ]);
+
+        const resolvedLots = Array.isArray(lots) ? lots : [];
+        const ownerId = String(user?._id || user?.id || user?.userId || "");
+        const attendantsList = Array.isArray(attendantsResponse) ? attendantsResponse : [];
+
+        const mappedAttendants = attendantsList
+          .filter((attendantUser) => {
+            const attendantOwnerId = String(attendantUser?.attendant?.ownerId || "");
+            return !ownerId || attendantOwnerId === ownerId;
+          })
+          .map((attendantUser) => {
+            const attendant = attendantUser?.attendant || {};
+            const lot = resolvedLots.find((l) => String(l?._id) === String(attendant?.lotId));
+            return {
+              id: String(attendantUser?._id ?? attendantUser?.id),
+              name: attendantUser?.name || "Unnamed Attendant",
+              email: attendantUser?.email || "-",
+              phone: attendant?.phone || "-",
+              faydaId: attendant?.faydaId || "-",
+              address: attendant?.address || "-",
+              branch: lot?.name || "Unassigned",
+              shiftStart: attendant?.shiftStart || "--:--",
+              shiftEnd: attendant?.shiftEnd || "--:--",
+              lotId: attendant?.lotId ? String(attendant?.lotId) : "",
+              status: attendantUser?.status === "inactive" ? "Inactive" : "Active",
+              avatar:
+                attendantUser?.avatarUrl ||
+                `https://i.pravatar.cc/150?u=${encodeURIComponent(
+                  String(attendantUser?._id ?? attendantUser?.id ?? attendantUser?.email ?? attendantUser?.name ?? "attendant")
+                )}`,
+            };
+          });
+
+        if (!cancelled) {
+          setOwnerLots(resolvedLots);
+          setAttendants(mappedAttendants);
+        }
+      } catch {
+        if (!cancelled) {
+          setOwnerLots([]);
+          setAttendants([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?._id, user?.id, user?.userId]);
+
+  useEffect(() => {
+    if (!isModalOpen || ownerLots.length === 0) return;
+    setFormData((prev) => {
+      if (prev.lotId) return prev;
+      const first = lotsForBranchSelect(ownerLots, prev.city)[0];
+      if (!first) return prev;
+      return { ...prev, branch: first.name, lotId: String(first._id) };
+    });
+  }, [isModalOpen, ownerLots]);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
-    if (file) setAvatarPreview(URL.createObjectURL(file));
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Profile image must be 10MB or smaller.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    setAvatarPreview(URL.createObjectURL(file));
+    setAvatarFile(file);
   };
 
   const handleRemoveImage = (e) => {
     e.preventDefault();
     setAvatarPreview(null);
+    setAvatarFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -233,11 +325,126 @@ export default function AttendantManagement() {
     setFormData(prev => ({ ...prev, shiftStart: start, shiftEnd: end }));
   };
 
-  const handleSubmit = (e) => {
+  const openEditModal = (att) => {
+    const lot = ownerLots.find((l) => String(l?._id) === String(att?.lotId));
+
+    setEditingAttendant(att);
+    setFormData({
+      name: att?.name || "",
+      email: att?.email || "",
+      phone: formatPhoneForForm(att?.phone || ""),
+      faydaId: formatFaydaForForm(att?.faydaId || ""),
+      address: att?.address && att.address !== "-" ? att.address : "",
+      region: lot?.region || formData.region,
+      city: lot?.city || formData.city,
+      branch: lot?.name || att?.branch || "",
+      lotId: att?.lotId || (lot ? String(lot._id) : ""),
+      password: "",
+      shiftStart: att?.shiftStart || "06:00 AM",
+      shiftEnd: att?.shiftEnd || "02:00 PM",
+    });
+    setErrors({});
+    setActiveDropdown(null);
+    setIsEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditingAttendant(null);
+    setErrors({});
+    setActiveDropdown(null);
+  };
+
+  const handleUpdateAttendant = async (e) => {
     e.preventDefault();
-    
-    // Manually run all validations on submit just in case they bypassed the blur events
-    const fVal = formData.faydaId.replace(/\D/g, '');
+    if (editSubmitting) return;
+    if (!editingAttendant?.id) return;
+
+    const fVal = formData.faydaId.replace(/\D/g, "");
+    const eVal = formData.email;
+    const pVal = formData.phone;
+
+    let hasErrors = false;
+    if (fVal.length !== 16) hasErrors = true;
+    if (!eVal.toLowerCase().endsWith("@gmail.com")) hasErrors = true;
+    if (pVal.length !== 9 || (pVal[0] !== "9" && pVal[0] !== "7")) hasErrors = true;
+    if (!formData.shiftStart || !formData.shiftEnd) hasErrors = true;
+    if (!formData.lotId || !isValidObjectId(formData.lotId)) hasErrors = true;
+
+    if (hasErrors) {
+      handleFaydaBlur();
+      handleEmailBlur();
+      handlePhoneBlur();
+      alert(
+        !formData.lotId || !isValidObjectId(formData.lotId)
+          ? "Please select a valid parking lot (branch) before submitting."
+          : "Please fix the errors and ensure a branch and shift time are assigned before submitting."
+      );
+      return;
+    }
+
+    const formattedPhone = formatPhoneForBackend(pVal);
+    const payload = {
+      name: formData.name.trim(),
+      email: formData.email.trim().toLowerCase(),
+      attendant: {
+        lotId: formData.lotId,
+        phone: formattedPhone,
+        faydaId: fVal,
+        shiftStart: formData.shiftStart,
+        shiftEnd: formData.shiftEnd,
+        address: formData.address.trim(),
+      },
+    };
+
+    setEditSubmitting(true);
+    try {
+      await apiClient.patch(`/users/attendants/${editingAttendant.id}`, payload);
+
+      const lot = ownerLots.find((l) => String(l?._id) === String(formData.lotId));
+      const updatedLocal = {
+        ...editingAttendant,
+        name: payload.name,
+        email: payload.email,
+        phone: payload.attendant.phone,
+        faydaId: payload.attendant.faydaId,
+        address: payload.attendant.address,
+        lotId: String(payload.attendant.lotId),
+        branch: lot?.name || formData.branch,
+        shiftStart: payload.attendant.shiftStart,
+        shiftEnd: payload.attendant.shiftEnd,
+      };
+
+      setAttendants((prev) => prev.map((a) => (a.id === editingAttendant.id ? updatedLocal : a)));
+      alert("Attendant updated successfully.");
+      closeEditModal();
+    } catch (err) {
+      alert(err?.message || "Failed to update attendant.");
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  const handleDeleteAttendant = async (att) => {
+    if (!att?.id) return;
+    const confirmed = window.confirm(`Delete attendant "${att.name}"?`);
+    if (!confirmed) return;
+
+    try {
+      await apiClient.delete(`/users/attendants/${att.id}`);
+      setAttendants((prev) => prev.filter((a) => a.id !== att.id));
+      alert("Attendant deleted successfully.");
+      if (editingAttendant?.id === att.id) closeEditModal();
+    } catch (err) {
+      alert(err?.message || "Failed to delete attendant.");
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (submitting) return;
+
+    const fVal = formData.faydaId.replace(/\D/g, "");
     const eVal = formData.email;
     const pVal = formData.phone;
     const passVal = formData.password;
@@ -245,37 +452,110 @@ export default function AttendantManagement() {
     let hasErrors = false;
     if (fVal.length !== 16) hasErrors = true;
     if (!eVal.toLowerCase().endsWith("@gmail.com")) hasErrors = true;
-    if (pVal.length !== 9 || (pVal[0] !== '9' && pVal[0] !== '7')) hasErrors = true;
+    if (pVal.length !== 9 || (pVal[0] !== "9" && pVal[0] !== "7")) hasErrors = true;
     if (checkPasswordStrength(passVal)) hasErrors = true;
-    if (!formData.branch || !formData.shiftStart || !formData.shiftEnd) hasErrors = true;
+    if (!formData.shiftStart || !formData.shiftEnd) hasErrors = true;
+    if (!formData.lotId || !isValidObjectId(formData.lotId)) hasErrors = true;
 
     if (hasErrors) {
       handleFaydaBlur();
       handleEmailBlur();
       handlePhoneBlur();
       handlePasswordBlur();
-      alert("Please fix the errors and ensure a branch and shift time are assigned before submitting.");
+      alert(
+        !formData.lotId || !isValidObjectId(formData.lotId)
+          ? "Please select a valid parking lot (branch) before submitting."
+          : "Please fix the errors and ensure a branch and shift time are assigned before submitting."
+      );
       return;
     }
 
-    const formattedPhone = `+251 ${formData.phone.substring(0,3)} ${formData.phone.substring(3,6)} ${formData.phone.substring(6,9)}`;
+    const formattedPhone = `+251 ${formData.phone.substring(0, 3)} ${formData.phone.substring(3, 6)} ${formData.phone.substring(6, 9)}`;
 
-    const newAttendant = {
-      id: `att_${Date.now()}`,
-      name: formData.name, email: formData.email, phone: formattedPhone,
-      faydaId: formData.faydaId, address: formData.address, branch: formData.branch,
-      shiftStart: formData.shiftStart, shiftEnd: formData.shiftEnd, 
-      status: "Active", avatar: avatarPreview || `https://i.pravatar.cc/150?u=${formData.name.replace(/\s/g, '')}`
+    const payload = {
+      name: formData.name.trim(),
+      email: formData.email.trim().toLowerCase(),
+      password: formData.password,
+      attendant: {
+        lotId: formData.lotId,
+        phone: formattedPhone,
+        faydaId: fVal,
+        shiftStart: formData.shiftStart,
+        shiftEnd: formData.shiftEnd,
+        address: formData.address.trim(),
+      },
     };
+    setSubmitting(true);
+    try {
+      const created = await apiClient.post("/users/attendants", payload);
+      const createdUserId = created?._id || created?.id || null;
+      let uploadedAvatarUrl = created?.avatarUrl || null;
+      if (avatarFile && createdUserId) {
+        try {
+          const fd = new FormData();
+          fd.append("image", avatarFile);
+          const uploaded = await apiClient.postFormData(
+            `/uploads/users/${createdUserId}/profile-image`,
+            fd
+          );
+          uploadedAvatarUrl = uploaded?.url || uploadedAvatarUrl;
+        } catch (uploadErr) {
+          console.error("Attendant profile upload failed:", uploadErr);
+          alert(
+            "Attendant was created, but profile image upload failed. You can upload it later from profile settings."
+          );
+        }
+      }
+      const lot = ownerLots.find((l) => String(l._id) === String(created?.attendant?.lotId ?? formData.lotId));
+      const displayBranch = lot?.name || formData.branch;
+      const avatar =
+        uploadedAvatarUrl ||
+        avatarPreview ||
+        `https://i.pravatar.cc/150?u=${encodeURIComponent(formData.name.replace(/\s/g, "") || "user")}`;
 
-    setAttendants([...attendants, newAttendant]);
-    closeModal();
+      const newAttendant = {
+        id: String(created?._id ?? created?.id ?? `att_${Date.now()}`),
+        name: created?.name ?? formData.name,
+        email: created?.email ?? formData.email,
+        phone: formattedPhone,
+        faydaId: formData.faydaId,
+        address: formData.address,
+        lotId: String(created?.attendant?.lotId ?? formData.lotId),
+        branch: displayBranch,
+        shiftStart: formData.shiftStart,
+        shiftEnd: formData.shiftEnd,
+        status: created?.status === "inactive" ? "Inactive" : "Active",
+        avatar,
+      };
+
+      setAttendants((prev) => [...prev, newAttendant]);
+      alert("Attendant registered successfully.");
+      closeModal();
+    } catch (err) {
+      alert(err?.message || "Failed to register attendant.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const closeModal = () => {
     setIsModalOpen(false);
-    setFormData({ name: "", email: "", phone: "", faydaId: "", address: "", password: "", region: "Addis Ababa", city: "Addis Ababa", branch: "Bole Airport Parking", shiftStart: "06:00 AM", shiftEnd: "02:00 PM" });
+    setFormData({
+      name: "",
+      email: "",
+      phone: "",
+      faydaId: "",
+      address: "",
+      password: "",
+      region: "Addis Ababa",
+      city: "Addis Ababa",
+      branch: "",
+      lotId: "",
+      shiftStart: "06:00 AM",
+      shiftEnd: "02:00 PM",
+    });
     setAvatarPreview(null);
+    setAvatarFile(null);
     setErrors({});
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -366,8 +646,22 @@ export default function AttendantManagement() {
                     <td className="px-4 md:px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button title="Reset Password" type="button" className="p-2 text-zinc-400 hover:text-blue-500 bg-zinc-100 dark:bg-white/5 rounded-lg transition-colors outline-none"><Key className="h-4 w-4" /></button>
-                        <button title="Edit" type="button" className="p-2 text-zinc-400 hover:text-emerald-500 bg-zinc-100 dark:bg-white/5 rounded-lg transition-colors outline-none"><Edit2 className="h-4 w-4" /></button>
-                        <button title="Delete" type="button" className="p-2 text-zinc-400 hover:text-red-500 bg-zinc-100 dark:bg-white/5 rounded-lg transition-colors outline-none"><Trash2 className="h-4 w-4" /></button>
+                        <button
+                          title="Edit"
+                          type="button"
+                          onClick={() => openEditModal(att)}
+                          className="p-2 text-zinc-400 hover:text-emerald-500 bg-zinc-100 dark:bg-white/5 rounded-lg transition-colors outline-none"
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </button>
+                        <button
+                          title="Delete"
+                          type="button"
+                          onClick={() => handleDeleteAttendant(att)}
+                          className="p-2 text-zinc-400 hover:text-red-500 bg-zinc-100 dark:bg-white/5 rounded-lg transition-colors outline-none"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -532,8 +826,157 @@ export default function AttendantManagement() {
             </div>
             
             <div className="p-4 md:p-6 border-t border-zinc-100 dark:border-white/5 shrink-0 bg-white dark:bg-[#18181b]">
-              <button form="attendantForm" type="submit" className="w-full bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold py-3 md:py-3.5 text-sm md:text-base rounded-xl shadow-lg shadow-emerald-500/20 transition-transform active:scale-95 outline-none">
+              <button form="attendantForm" type="submit" disabled={submitting} className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 disabled:pointer-events-none text-zinc-950 font-bold py-3 md:py-3.5 text-sm md:text-base rounded-xl shadow-lg shadow-emerald-500/20 transition-transform active:scale-95 outline-none">
                 Register Attendant
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isEditModalOpen && editingAttendant && (
+        <div className="fixed inset-0 z-[7001] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-zinc-900/60 dark:bg-black/80 backdrop-blur-sm" onClick={closeEditModal}></div>
+          <div className="relative w-full max-w-2xl bg-white dark:bg-[#18181b] rounded-2xl shadow-2xl border border-zinc-200 dark:border-white/10 overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-zinc-100 dark:border-white/5 shrink-0">
+              <h2 className="text-lg md:text-xl font-bold text-zinc-900 dark:text-white">Edit Attendant</h2>
+              <button type="button" onClick={closeEditModal} className="p-1.5 text-zinc-400 hover:text-zinc-900 dark:hover:text-white rounded-md transition-colors outline-none">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-4 md:p-6 overflow-y-auto flex-1 custom-scrollbar">
+              <form id="editAttendantForm" onSubmit={handleUpdateAttendant} className="flex flex-col gap-4 md:gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs md:text-sm font-bold uppercase tracking-wider text-zinc-500">Full Name</label>
+                    <input
+                      required
+                      type="text"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="e.g. Kebede Alemu"
+                      className="w-full bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-sm md:text-base rounded-xl px-4 py-3 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs md:text-sm font-bold uppercase tracking-wider text-zinc-500">Fayda ID (FAN)</label>
+                    <input
+                      required
+                      type="text"
+                      value={formData.faydaId}
+                      onChange={handleFaydaChange}
+                      onBlur={handleFaydaBlur}
+                      placeholder="XXXX XXXX XXXX XXXX"
+                      className={`w-full bg-zinc-50 dark:bg-white/5 border ${errors.faydaId ? "border-red-500" : "border-zinc-200 dark:border-white/10"} text-sm md:text-base font-mono tracking-widest rounded-xl px-4 py-3 outline-none focus:ring-1 transition-all ${errors.faydaId ? "focus:ring-red-500" : "focus:border-emerald-500 focus:ring-emerald-500"}`}
+                    />
+                    {errors.faydaId && (
+                      <p className="text-[10px] md:text-xs text-red-500 font-medium flex items-center gap-1 mt-1 animate-in fade-in">
+                        <AlertCircle className="h-3 w-3" /> {errors.faydaId}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs md:text-sm font-bold uppercase tracking-wider text-zinc-500">Gmail Address</label>
+                    <div className="relative">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                      <input
+                        required
+                        type="email"
+                        value={formData.email}
+                        onChange={handleEmailChange}
+                        onBlur={handleEmailBlur}
+                        placeholder="attendant@gmail.com"
+                        className={`w-full bg-zinc-50 dark:bg-white/5 border ${errors.email ? "border-red-500" : "border-zinc-200 dark:border-white/10"} text-sm md:text-base rounded-xl pl-10 pr-4 py-3 outline-none focus:ring-1 transition-all ${errors.email ? "focus:ring-red-500" : "focus:border-emerald-500 focus:ring-emerald-500"}`}
+                      />
+                    </div>
+                    {errors.email && (
+                      <p className="text-[10px] md:text-xs text-red-500 font-medium flex items-center gap-1 mt-1 animate-in fade-in">
+                        <AlertCircle className="h-3 w-3" /> {errors.email}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs md:text-sm font-bold uppercase tracking-wider text-zinc-500">Phone Number</label>
+                    <div className="relative flex items-center">
+                      <div className="absolute left-0 top-0 bottom-0 flex items-center justify-center bg-zinc-100 dark:bg-white/5 border-r border-zinc-200 dark:border-white/10 px-3 rounded-l-xl z-10">
+                        <span className="text-sm md:text-base font-mono font-bold text-zinc-500">+251</span>
+                      </div>
+                      <input
+                        required
+                        type="tel"
+                        value={formData.phone}
+                        onChange={handlePhoneChange}
+                        onBlur={handlePhoneBlur}
+                        placeholder="9XX XXX XXX"
+                        className={`w-full bg-zinc-50 dark:bg-white/5 border ${errors.phone ? "border-red-500" : "border-zinc-200 dark:border-white/10"} text-sm md:text-base font-mono tracking-widest rounded-xl pl-16 pr-4 py-3 outline-none focus:ring-1 transition-all ${errors.phone ? "focus:ring-red-500" : "focus:border-emerald-500 focus:ring-emerald-500"}`}
+                      />
+                    </div>
+                    {errors.phone && (
+                      <p className="text-[10px] md:text-xs text-red-500 font-medium flex items-center gap-1 mt-1 animate-in fade-in">
+                        <AlertCircle className="h-3 w-3" /> {errors.phone}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs md:text-sm font-bold uppercase tracking-wider text-zinc-500">Physical Address</label>
+                  <div className="relative">
+                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+                    <input
+                      type="text"
+                      value={formData.address}
+                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      placeholder="e.g. Bole, Kebele 03"
+                      className="w-full bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-sm md:text-base rounded-xl pl-10 pr-4 py-3 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-500/5 mt-2">
+                  <h3 className="text-xs md:text-sm font-bold text-emerald-700 dark:text-emerald-400 mb-4 flex items-center gap-2">
+                    <MapPin className="h-4 w-4" /> Assignment & Custom Shift Details
+                  </h3>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full min-w-0 mb-5">
+                    <DropdownTrigger label="Region" value={formData.region} onClick={() => setActiveDropdown("region")} />
+                    <DropdownTrigger label="City" value={formData.city} onClick={() => setActiveDropdown("city")} disabled={!formData.region} />
+                    <DropdownTrigger label="Assigned Branch" value={formData.branch} onClick={() => setActiveDropdown("branch")} disabled={!formData.city} />
+                  </div>
+
+                  <div className="border-t border-emerald-200 dark:border-emerald-500/20 pt-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+                      <label className="text-xs md:text-sm font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-500">Custom Shift Timing</label>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => setQuickShift("06:00 AM", "02:00 PM")} className="px-2 py-1 rounded border border-emerald-300 dark:border-emerald-500/30 text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition flex items-center gap-1 active:scale-95"><Sunrise className="h-3 w-3" /> Morning</button>
+                        <button type="button" onClick={() => setQuickShift("02:00 PM", "10:00 PM")} className="px-2 py-1 rounded border border-amber-300 dark:border-amber-500/30 text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition flex items-center gap-1 active:scale-95"><Sun className="h-3 w-3" /> Afternoon</button>
+                        <button type="button" onClick={() => setQuickShift("10:00 PM", "06:00 AM")} className="px-2 py-1 rounded border border-indigo-300 dark:border-indigo-500/30 text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition flex items-center gap-1 active:scale-95"><Moon className="h-3 w-3" /> Night</button>
+                        <button type="button" onClick={() => setQuickShift("08:00 AM", "06:00 PM")} className="px-2 py-1 rounded bg-zinc-800 text-white dark:bg-white dark:text-zinc-900 text-[10px] font-bold uppercase tracking-wider hover:opacity-80 transition active:scale-95">Full Day</button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <PremiumTimePicker label="Shift Start Time" value={formData.shiftStart} onChange={(val) => setFormData({ ...formData, shiftStart: val })} />
+                      <PremiumTimePicker label="Shift End Time" value={formData.shiftEnd} onChange={(val) => setFormData({ ...formData, shiftEnd: val })} />
+                    </div>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <div className="p-4 md:p-6 border-t border-zinc-100 dark:border-white/5 shrink-0 bg-white dark:bg-[#18181b]">
+              <button
+                form="editAttendantForm"
+                type="submit"
+                disabled={editSubmitting}
+                className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 disabled:pointer-events-none text-zinc-950 font-bold py-3 md:py-3.5 text-sm md:text-base rounded-xl shadow-lg shadow-emerald-500/20 transition-transform active:scale-95 outline-none"
+              >
+                {editSubmitting ? "Saving..." : "Save Changes"}
               </button>
             </div>
           </div>
@@ -558,7 +1001,19 @@ export default function AttendantManagement() {
                   <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">{group.group}</div>
                   <div className="flex flex-col gap-1">
                     {group.options.map(opt => (
-                      <button type="button" key={opt} onClick={() => { setFormData({...formData, region: opt, city: CITIES_BY_REGION[opt][0], branch: BRANCHES_BY_CITY[CITIES_BY_REGION[opt][0]]?.[0] || "" }); setActiveDropdown(null); }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none transition-colors">
+                      <button type="button" key={opt} onClick={() => {
+                        const firstCity = CITIES_BY_REGION[opt][0];
+                        const matching = lotsForBranchSelect(ownerLots, firstCity);
+                        const firstLot = matching[0];
+                        setFormData({
+                          ...formData,
+                          region: opt,
+                          city: firstCity,
+                          branch: firstLot?.name || "",
+                          lotId: firstLot ? String(firstLot._id) : "",
+                        });
+                        setActiveDropdown(null);
+                      }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none transition-colors">
                         {opt} {formData.region === opt && <Check className="h-4 w-4 text-emerald-500" />}
                       </button>
                     ))}
@@ -567,20 +1022,37 @@ export default function AttendantManagement() {
               ))}
 
               {activeDropdown === 'city' && CITIES_BY_REGION[formData.region]?.map(opt => (
-                <button type="button" key={opt} onClick={() => { setFormData({...formData, city: opt, branch: BRANCHES_BY_CITY[opt]?.[0] || "" }); setActiveDropdown(null); }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
+                <button type="button" key={opt} onClick={() => {
+                  const matching = lotsForBranchSelect(ownerLots, opt);
+                  const firstLot = matching[0];
+                  setFormData({
+                    ...formData,
+                    city: opt,
+                    branch: firstLot?.name || "",
+                    lotId: firstLot ? String(firstLot._id) : "",
+                  });
+                  setActiveDropdown(null);
+                }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
                   {opt} {formData.city === opt && <Check className="h-4 w-4 text-emerald-500" />}
                 </button>
               ))}
 
               {activeDropdown === 'branch' && (
-                BRANCHES_BY_CITY[formData.city]?.length > 0 ? (
-                  BRANCHES_BY_CITY[formData.city].map(opt => (
-                    <button type="button" key={opt} onClick={() => { setFormData({...formData, branch: opt}); setActiveDropdown(null); }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
-                      {opt} {formData.branch === opt && <Check className="h-4 w-4 text-emerald-500" />}
+                lotsForBranchSelect(ownerLots, formData.city).length > 0 ? (
+                  lotsForBranchSelect(ownerLots, formData.city).map((lot) => (
+                    <button type="button" key={String(lot._id)} onClick={() => {
+                      setFormData({
+                        ...formData,
+                        branch: lot.name,
+                        lotId: String(lot._id),
+                      });
+                      setActiveDropdown(null);
+                    }} className="flex w-full px-4 py-3 rounded-xl text-sm font-medium justify-between hover:bg-zinc-50 dark:hover:bg-white/5 outline-none mt-1 transition-colors">
+                      {lot.name} {formData.lotId === String(lot._id) && <Check className="h-4 w-4 text-emerald-500" />}
                     </button>
                   ))
                 ) : (
-                  <div className="p-4 text-sm text-zinc-500 text-center">No branches configured for this city.</div>
+                  <div className="p-4 text-sm text-zinc-500 text-center">No parking lots found for your account.</div>
                 )
               )}
             </div>

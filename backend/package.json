@@ -1,0 +1,37 @@
+{
+  "name": "visionpark-backend",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "start:prod": "NODE_ENV=production node src/server.js",
+    "test": "jest --runInBand",
+    "seed": "node src/scripts/seed.js",
+    "simulate:ai": "node src/scripts/simulate-ai.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cloudinary": "^2.10.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.23.0",
+    "multer": "^2.1.1",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "description": "Node.js + MongoDB backend for VisionPark with sessions, parking, operations, realtime forwarding, and AI event ingestion (simulation-ready).",
+  "directories": {
+    "test": "tests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

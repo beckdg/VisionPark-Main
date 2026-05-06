@@ -9,6 +9,8 @@ import {
   Shield, Bell, Key, Save, CheckCircle,
   Camera, Upload, Eye, EyeOff, RefreshCw, X
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
+import { useAuth } from "../../context/AuthContext";
 
 // --- INITIALIZATION HELPER ---
 const getInitialProfile = () => {
@@ -23,12 +25,13 @@ const getInitialProfile = () => {
   }
 
   return {
-    name: parsedData.name || "Kebede Alemu",
-    email: parsedData.email || "kebede.visionpark@gmail.com",
-    phone: parsedData.phone || "+251 911 234 567",
-    companyName: parsedData.companyName || "Alemu Parking Solutions PLC",
-    tinNumber: parsedData.tinNumber || "0012345678",
-    avatar: parsedData.avatar || "https://i.pravatar.cc/150?u=kebede"
+    name: parsedData.name || "Not available",
+    email: parsedData.email || "Not available",
+    phone: parsedData.phone || "Not available",
+    companyName: parsedData.companyName || "Not available",
+    tinNumber: parsedData.tinNumber || "Not available",
+    avatar: parsedData.avatar || null,
+    profileImagePublicId: parsedData.profileImagePublicId || null,
   };
 };
 
@@ -65,6 +68,7 @@ const getPasswordStrength = (pass) => {
 };
 
 export default function OwnerProfile() {
+  const auth = useAuth();
   const [profile, setProfile] = useState(getInitialProfile);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
 
@@ -125,15 +129,35 @@ export default function OwnerProfile() {
       const context = canvas.getContext('2d');
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const imageUrl = canvas.toDataURL('image/png');
-
-      setProfile(prev => {
-        const updated = { ...prev, avatar: imageUrl };
-        saveToLocalAndDispatch(updated); // Sync immediately
-        return updated;
-      });
-
-      stopCamera();
+      canvas.toBlob(
+        async (blob) => {
+          if (!blob) return;
+          try {
+            const fd = new FormData();
+            fd.append("image", new File([blob], "camera-capture.jpg", { type: "image/jpeg" }));
+            const res = await apiClient.postFormData("/uploads/profile-image", fd);
+            setProfile((prev) => {
+              const updated = {
+                ...prev,
+                avatar: res?.url || prev.avatar,
+                profileImagePublicId: res?.publicId || null,
+              };
+              saveToLocalAndDispatch(updated);
+              return updated;
+            });
+            if (typeof auth.refreshMe === "function") {
+              await auth.refreshMe();
+            }
+          } catch (err) {
+            console.error("Camera upload failed:", err);
+            alert(err?.message || "Upload failed.");
+          } finally {
+            stopCamera();
+          }
+        },
+        "image/jpeg",
+        0.92
+      );
     }
   };
 
@@ -143,34 +167,115 @@ export default function OwnerProfile() {
   }, []);
   // -----------------------------
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchOwnerProfile = async () => {
+      try {
+        const me = await apiClient.get("/auth/me");
+        const ownerProfile = me?.ownerProfile || me?.owner || {};
+        const backendProfile = {
+          name: me?.name || "Not available",
+          email: me?.email || "Not available",
+          phone: ownerProfile?.phone || "Not available",
+          companyName: ownerProfile?.companyName || "Not available",
+          tinNumber: ownerProfile?.tinNumber || "Not available",
+          avatar: me?.avatarUrl || me?.profileImageUrl || null,
+          profileImagePublicId: me?.profileImagePublicId || null,
+        };
+
+        if (!isMounted) return;
+        setProfile((prev) => {
+          const savedData = localStorage.getItem("vp_owner_data");
+          let parsedData = {};
+          if (savedData) {
+            try {
+              parsedData = JSON.parse(savedData) || {};
+            } catch {
+              parsedData = {};
+            }
+          }
+
+          const merged = {
+            ...backendProfile,
+            ...parsedData,
+          };
+
+          saveToLocalAndDispatch(merged);
+          return { ...prev, ...merged };
+        });
+      } catch (error) {
+        console.error("OwnerProfile fetch failed:", error);
+      }
+    };
+
+    fetchOwnerProfile();
+    return () => {
+      isMounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleProfileChange = (field, value) => {
     setProfile(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     const file = e.target.files && e.target.files[0];
     if (file) {
-      // Use FileReader to get base64 so it can be saved to localStorage
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProfile(prev => {
-          const updated = { ...prev, avatar: reader.result };
-          saveToLocalAndDispatch(updated); // Sync immediately
+      const max = 10 * 1024 * 1024;
+      if (file.size > max) {
+        alert("Image must be 10MB or smaller.");
+        setPhotoMenuOpen(false);
+        e.target.value = null;
+        return;
+      }
+      try {
+        const fd = new FormData();
+        fd.append("image", file);
+        const res = await apiClient.postFormData("/uploads/profile-image", fd);
+        setProfile((prev) => {
+          const updated = {
+            ...prev,
+            avatar: res?.url || prev.avatar,
+            profileImagePublicId: res?.publicId || null,
+          };
+          saveToLocalAndDispatch(updated);
           return updated;
         });
-      };
-      reader.readAsDataURL(file);
+        if (typeof auth.refreshMe === "function") {
+          await auth.refreshMe();
+        }
+      } catch (err) {
+        console.error("Profile image upload failed:", err);
+        alert(err?.message || "Upload failed. Check Cloudinary configuration and try again.");
+      }
     }
     setPhotoMenuOpen(false);
     e.target.value = null;
   };
 
-  const removePhoto = () => {
-    setProfile(prev => {
-      const updated = { ...prev, avatar: null };
-      saveToLocalAndDispatch(updated); // Sync immediately
+  const removePhoto = async () => {
+    const pid = profile.profileImagePublicId;
+    if (pid) {
+      try {
+        await apiClient.deleteWithBody("/uploads", { publicId: pid });
+      } catch (err) {
+        console.error("Remove cloud photo failed:", err);
+      }
+    }
+    setProfile((prev) => {
+      const updated = { ...prev, avatar: null, profileImagePublicId: null };
+      saveToLocalAndDispatch(updated);
       return updated;
     });
+    if (typeof auth.refreshMe === "function") {
+      try {
+        await auth.refreshMe();
+      } catch {
+        /* ignore */
+      }
+    }
     setPhotoMenuOpen(false);
   };
 
@@ -204,17 +309,46 @@ export default function OwnerProfile() {
     setShowPasswords(prev => ({ ...prev, new: true, confirm: true }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsSaving(true);
-    setTimeout(() => {
-      saveToLocalAndDispatch(profile); // Sync all text changes to the sidebar
+    try {
+      const payload = {
+        name: profile.name,
+        email: profile.email,
+        avatarUrl: profile.avatar || null,
+        owner: {
+          phone: profile.phone,
+          companyName: profile.companyName,
+          tinNumber: profile.tinNumber,
+        },
+      };
 
+      const updated = await apiClient.patch("/users/owners/me", payload);
+      const updatedOwnerProfile = updated?.ownerProfile || updated?.owner || {};
+      const nextProfile = {
+        name: updated?.name || "Not available",
+        email: updated?.email || "Not available",
+        phone: updatedOwnerProfile?.phone || "Not available",
+        companyName: updatedOwnerProfile?.companyName || "Not available",
+        tinNumber: updatedOwnerProfile?.tinNumber || "Not available",
+        avatar: updated?.avatarUrl || updated?.profileImageUrl || null,
+        profileImagePublicId: updated?.profileImagePublicId || null,
+      };
+
+      setProfile(nextProfile);
+      saveToLocalAndDispatch(nextProfile);
+      if (typeof auth.refreshMe === "function") {
+        await auth.refreshMe();
+      }
       setIsSaving(false);
       setSaveSuccess(true);
       setPasswords({ current: "", new: "", confirm: "" });
       setShowPasswords({ current: false, new: false, confirm: false });
       setTimeout(() => setSaveSuccess(false), 3000);
-    }, 800);
+    } catch (error) {
+      console.error("Owner profile save failed:", error);
+      setIsSaving(false);
+    }
   };
 
   const passStrength = getPasswordStrength(passwords.new);

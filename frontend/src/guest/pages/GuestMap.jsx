@@ -9,26 +9,21 @@ import {
 } from "lucide-react";
 import { useTheme } from "../../context/ThemeContext";
 import { useNavigate } from "react-router-dom";
+import { apiClient } from "../../api/apiClient";
 
 const DEFAULT_LOC = [9.0249, 38.7468]; // Addis Ababa Center
 
-// --- EXPANDED NATIONAL DATABASE ---
-const INITIAL_AREAS = [
-    { id: "PA-01", region: "Addis Ababa", name: "Megenagna SMART", lat: 9.0206, lon: 38.7996, price: 35.0, availableSpaces: 17 },
-    { id: "PA-02", region: "Addis Ababa", name: "Meskel Square", lat: 9.0104, lon: 38.7611, price: 35.0, availableSpaces: 24 },
-    { id: "PA-03", region: "Addis Ababa", name: "Bole Int. Airport", lat: 8.9837, lon: 38.7963, price: 50.0, availableSpaces: 112 },
-    { id: "PA-04", region: "Addis Ababa", name: "Edna Mall", lat: 8.9971, lon: 38.7866, price: 40.0, availableSpaces: 5 },
-    { id: "PA-05", region: "Addis Ababa", name: "Dembel City Center", lat: 9.0049, lon: 38.7668, price: 30.0, availableSpaces: 41 },
-    { id: "PA-DD1", region: "Dire Dawa", name: "Dire Dawa Train Station", lat: 9.5931, lon: 41.8591, price: 25.0, availableSpaces: 45 },
-    { id: "PA-DD2", region: "Dire Dawa", name: "Ashawa Market Parking", lat: 9.6001, lon: 41.8500, price: 20.0, availableSpaces: 12 },
-    { id: "PA-OR1", region: "Oromia", name: "Adama Bus Terminal", lat: 8.5414, lon: 39.2689, price: 25.0, availableSpaces: 30 },
-    { id: "PA-OR2", region: "Oromia", name: "Adama Post Office", lat: 8.5480, lon: 39.2740, price: 20.0, availableSpaces: 8 },
-    { id: "PA-AM1", region: "Amhara", name: "Lake Tana Shore Parking", lat: 11.5940, lon: 37.3875, price: 30.0, availableSpaces: 50 },
-    { id: "PA-TG1", region: "Tigray", name: "Romanat Square", lat: 13.4967, lon: 39.4753, price: 20.0, availableSpaces: 22 },
-    { id: "PA-SM1", region: "Somali", name: "Jigjiga City Center", lat: 9.3541, lon: 42.7956, price: 15.0, availableSpaces: 60 },
-    { id: "PA-SD1", region: "Sidama", name: "Piassa Hawassa", lat: 7.0504, lon: 38.4690, price: 25.0, availableSpaces: 18 },
-    { id: "PA-SD2", region: "Sidama", name: "Hawassa Lake View", lat: 7.0450, lon: 38.4600, price: 35.0, availableSpaces: 40 },
-];
+const normalizeRegionId = (region) => {
+    const val = String(region || "").trim().toLowerCase();
+    if (val.includes("addis")) return "Addis Ababa";
+    if (val.includes("dire")) return "Dire Dawa";
+    if (val.includes("oromia")) return "Oromia";
+    if (val.includes("amhara")) return "Amhara";
+    if (val.includes("tigray")) return "Tigray";
+    if (val.includes("somali")) return "Somali";
+    if (val.includes("sidama")) return "Sidama";
+    return "Addis Ababa";
+};
 
 const REGIONS = [
     { id: "Addis Ababa", label: "Addis Ababa", group: "FEDERAL", center: [9.0249, 38.7468] },
@@ -146,6 +141,7 @@ export default function GuestMap() {
 
     const [userLocation, setUserLocation] = useState(DEFAULT_LOC);
     const [selectedRegion, setSelectedRegion] = useState("ALL");
+    const [allAreas, setAllAreas] = useState([]);
     const [areas, setAreas] = useState([]);
     const [focusedAreaId, setFocusedAreaId] = useState(null);
 
@@ -233,9 +229,43 @@ export default function GuestMap() {
     }, []);
 
     useEffect(() => {
-        let filteredAreas = INITIAL_AREAS;
+        let cancelled = false;
+        (async () => {
+            try {
+                const lots = await apiClient.get("/parking/public/lots");
+                const mappedLots = Array.isArray(lots)
+                    ? lots.map((lot) => ({
+                        id: String(lot._id),
+                        _id: String(lot._id),
+                        region: normalizeRegionId(lot.region),
+                        name: lot.name || "Unnamed Parking",
+                        lat: lot?.location?.coordinates?.[1] ?? DEFAULT_LOC[0],
+                        lon: lot?.location?.coordinates?.[0] ?? DEFAULT_LOC[1],
+                        price: Number(lot?.price ?? 0),
+                        availableSpaces: Number(lot?.availableSpaces ?? 0),
+                    }))
+                    : [];
+
+                if (!cancelled) {
+                    setAllAreas(mappedLots);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setAllAreas([]);
+                    showToast(error?.message || "Failed to load parking data.", "error");
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        let filteredAreas = allAreas;
         if (selectedRegion !== "ALL") {
-            filteredAreas = INITIAL_AREAS.filter(area => area.region === selectedRegion);
+            filteredAreas = allAreas.filter(area => area.region === selectedRegion);
             const sorted = filteredAreas.map((area) => {
                 const dist = mockHaversineDistance(userLocation[0], userLocation[1], area.lat, area.lon);
                 return { ...area, distance: dist };
@@ -245,10 +275,14 @@ export default function GuestMap() {
             if (sorted.length > 0) setFocusedAreaId(sorted[0].id);
             else setFocusedAreaId(null);
         } else {
-            setAreas(INITIAL_AREAS);
-            setFocusedAreaId(null);
+            const national = allAreas.map((area) => ({
+                ...area,
+                distance: mockHaversineDistance(userLocation[0], userLocation[1], area.lat, area.lon),
+            }));
+            setAreas(national);
+            setFocusedAreaId(national[0]?.id || null);
         }
-    }, [userLocation, selectedRegion]);
+    }, [userLocation, selectedRegion, allAreas]);
 
     const handleRegionChange = (val) => {
         setSelectedRegion(val);

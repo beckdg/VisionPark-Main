@@ -5,6 +5,7 @@ import {
     ChevronDown, X, Check, Shield, MapPin, Hash, Globe,
     Send, MessageCircle, Mail, Download, Camera, QrCode, ScanFace, CheckCircle
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
 
 // --- Option Data Structures ---
 const LICENCE_OPTIONS = [
@@ -45,12 +46,6 @@ const VEHICLE_RATES = {
     "Machineries | Above 10,001KG weight": 200,
 };
 
-const INITIAL_RECENT = [
-    { id: "TRX-091", plate: "AA 45892", category: "Public Transport Vehicles | Upto 12 Seats", amount: 60, time: "2 mins ago", status: "Active", duration: "2h 0m" },
-    { id: "TRX-090", plate: "OR 12904", category: "Dry Freight Vehicles | <35 Quintal", amount: 80, time: "15 mins ago", status: "Active", duration: "2h 0m" },
-    { id: "TRX-089", plate: "AA 99321", category: "Motorcycle | Motorcycle", amount: 2.50, time: "45 mins ago", status: "Completed", duration: "0h 15m" },
-];
-
 export default function WalkUpPOS() {
     // Form State
     const [activeModal, setActiveModal] = useState(null);
@@ -65,7 +60,7 @@ export default function WalkUpPOS() {
     const [depositMinutes, setDepositMinutes] = useState("0");
 
     // Ledger & Receipt State
-    const [recentSessions, setRecentSessions] = useState(INITIAL_RECENT);
+    const [recentSessions, setRecentSessions] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [plateError, setPlateError] = useState("");
     const [generatedReceipt, setGeneratedReceipt] = useState(null);
@@ -79,6 +74,17 @@ export default function WalkUpPOS() {
     const [shareSuccess, setShareSuccess] = useState("");
     const [isDownloading, setIsDownloading] = useState(false);
     const [isPrinting, setIsPrinting] = useState(false);
+
+    const mapWalkupRowToUi = (row) => ({
+        id: row?.id ?? row?.transactionCode ?? "--",
+        checkinId: row?.checkinId ?? row?._id ?? null,
+        plate: row?.plate ?? "--",
+        category: row?.category ?? "--",
+        amount: Number(row?.amount ?? 0),
+        time: row?.time ?? "--",
+        status: row?.status ?? "Active",
+        duration: row?.duration ?? "0h 0m",
+    });
 
     // --- MATH & LOGIC DERIVATIONS ---
     const hideRegion = ["United Nations", "African Union", "Government", "Temporary"].includes(licenceType);
@@ -178,28 +184,45 @@ export default function WalkUpPOS() {
         }
     }, [plate, licenceType]);
 
+    const fetchRecentSessions = async () => {
+        try {
+            const data = await apiClient.get(`/attendant/walkup/recent?limit=30`);
+            const rows = Array.isArray(data) ? data : [];
+            setRecentSessions(rows.map(mapWalkupRowToUi));
+        } catch (error) {
+            console.error("WalkUpPOS recent fetch failed:", error);
+            setRecentSessions([]);
+        }
+    };
+
+    useEffect(() => {
+        fetchRecentSessions();
+    }, []);
+
     // --- CHECK-IN LOGIC ---
-    const handleProcessCheckIn = () => {
+    const handleProcessCheckIn = async () => {
         if (plateError || !plate.trim()) return alert("Please enter a valid license plate.");
 
         setIsProcessing(true);
-        const fullPlate = platePrefix ? `${platePrefix} ${plate}` : plate;
-
-        setTimeout(() => {
-            const newSession = {
-                id: `TRX-0${92 + recentSessions.length}`,
-                plate: fullPlate,
-                category: vehicleType,
-                amount: totalDeposit,
-                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                duration: formatTimeDisplay(safeHours, safeMinutes),
-                status: "Active"
-            };
-
-            setRecentSessions([newSession, ...recentSessions]);
-            setIsProcessing(false);
+        try {
+            const created = await apiClient.post(`/attendant/walkup/checkin`, {
+                licenceType,
+                region: hideRegion || showCountry ? null : region,
+                countryCode: showCountry ? countryCode : null,
+                plate,
+                vehicleType,
+                durationHours: safeHours,
+                durationMinutes: safeMinutes,
+            });
+            const newSession = mapWalkupRowToUi(created);
+            setRecentSessions((prev) => [newSession, ...prev]);
             setGeneratedReceipt(newSession);
-        }, 800);
+        } catch (error) {
+            console.error("WalkUpPOS check-in failed:", error);
+            alert(error?.message || "Failed to process check-in.");
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     const closeReceiptModal = () => {

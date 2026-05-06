@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useTheme } from "../../context/ThemeContext";
+import { useAuth } from "../../context/AuthContext";
+import { apiClient } from "../../api/apiClient";
 import { Header } from "../../components/layout/Header";
 import { GlassCard } from "../../components/ui/GlassCard";
 import {
@@ -32,6 +34,7 @@ const VEHICLE_OPTIONS = [
 export default function DriverSignUp() {
   const navigate = useNavigate();
   const { setTheme } = useTheme();
+  const auth = useAuth();
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("vp_theme");
@@ -67,6 +70,7 @@ export default function DriverSignUp() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const getPasswordScore = (pass) => {
     let score = 0;
@@ -200,21 +204,64 @@ export default function DriverSignUp() {
     return isValid;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (plateError || passwordError || emailError || phoneError || !isPasswordStrong || !formData.agreePolicy) return;
+    setSubmitError("");
+    if (!formData.email.trim()) {
+      setSubmitError("Email is required.");
+      return;
+    }
+    if (formData.password.length < 8) {
+      setSubmitError("Password must be at least 8 characters.");
+      return;
+    }
+    if (!formData.licensePlate.trim()) {
+      setSubmitError("License plate is required.");
+      return;
+    }
+    if (passwordError || !formData.agreePolicy) return;
     setIsSubmitting(true);
+
     const fullPlate = platePrefix ? `${platePrefix} ${formData.licensePlate}` : formData.licensePlate;
-    localStorage.setItem("vp_driver_name", formData.fullName.trim());
-    localStorage.setItem("vp_driver_email", formData.email.trim());
-    localStorage.setItem("vp_driver_phone", formData.phone.trim());
-    localStorage.setItem("vp_driver_vehicle", formData.vehicleType);
-    localStorage.setItem("vp_driver_license_plate", fullPlate);
-    setTimeout(() => {
+    const normalizedPhone = formData.phone.trim();
+    const normalizedRegion = showCountry ? formData.countryCode.trim() : formData.region.trim();
+
+    const payload = {
+      name: formData.fullName.trim(),
+      email: formData.email.trim(),
+      password: formData.password,
+      role: "driver",
+      driver: {
+        licenceType: formData.licenceType,
+        licensePlate: fullPlate.trim(),
+        vehicleType: formData.vehicleType,
+        paymentMethod: "Telebirr",
+      },
+    };
+
+    if (normalizedPhone) {
+      payload.driver.phone = normalizedPhone;
+    }
+    if (normalizedRegion) {
+      payload.driver.region = normalizedRegion;
+    }
+
+    try {
+      await apiClient.post("/auth/register", payload);
+      const loggedInUser = await auth.login(formData.email.trim(), formData.password);
       setIsSubmitting(false);
       setIsSuccess(true);
-      setTimeout(() => navigate("/login"), 1500);
-    }, 1200);
+
+      if (loggedInUser?.role === "driver") {
+        navigate("/driver");
+        return;
+      }
+      navigate("/driver");
+    } catch (error) {
+      setIsSubmitting(false);
+      setIsSuccess(false);
+      setSubmitError(error?.message || "Registration failed.");
+    }
   };
 
   const getInputClass = (hasError, isPassword = false) =>
@@ -433,7 +480,7 @@ export default function DriverSignUp() {
                 {/* Submit */}
                 <button
                   type="submit"
-                  disabled={!!plateError || !!passwordError || !!emailError || !!phoneError || !isPasswordStrong || !formData.agreePolicy || isSubmitting || isSuccess}
+                  disabled={!!passwordError || !formData.agreePolicy || isSubmitting || isSuccess}
                   className={`group relative w-full h-12 md:h-14 mt-2 flex items-center justify-center rounded-xl font-bold text-sm md:text-base tracking-wide uppercase overflow-hidden transition-all duration-300 outline-none cursor-pointer ${isSuccess
                     ? "bg-emerald-600 text-white shadow-[0_0_20px_rgba(5,150,105,0.5)]"
                     : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400 hover:scale-[1.02] active:scale-95 shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_30px_rgba(16,185,129,0.5)]"
@@ -448,6 +495,9 @@ export default function DriverSignUp() {
                     "Create Account"
                   )}
                 </button>
+                {submitError && (
+                  <p className="text-center text-xs md:text-sm text-red-500">{submitError}</p>
+                )}
 
                 <p className="text-center text-xs md:text-sm text-zinc-600 dark:text-zinc-400 mt-2">
                   Already have an account?{" "}

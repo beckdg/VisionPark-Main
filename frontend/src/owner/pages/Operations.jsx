@@ -4,6 +4,7 @@ import {
   CheckCircle, Clock, Maximize2, Video, Camera,
   Activity, MapPin, ChevronRight, Share, Radar, X
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
 
 const CAMERA_BRANCHES = [
   {
@@ -31,117 +32,75 @@ const SYSTEM_ALERTS = [
   { id: 4, type: "LPR Mismatch", branch: "Bole Airport Parking", camera: "Terminal A Entry", time: "2 hours ago", status: "Resolved" },
 ];
 
-const STATIC_INCIDENTS = [
-  {
-    id: "INC-601", branch: "Current Branch", zone: "N/A", spot: "N/A",
-    date: "3/25/2026, 8:26:19 PM", plates: ["124243"], category: "Property Damage",
-    description: "Hit: 124243",
-    attendantName: "Attendant", attendantId: null,
-    status: "Pending Review", hasVideo: true, hasPhoto: false, file: null
-  },
-  {
-    id: "INC-602", branch: "Piazza Street Parking", zone: "Street Level", spot: "S05",
-    date: "3/25/2026, 9:15:00 AM", plates: ["DR-55521"], category: "Customer Dispute",
-    description: "Driver refused to pay overstay penalty of 105 ETB.",
-    attendantName: "Sara Tadesse", attendantId: null,
-    status: "Pending", hasVideo: false, hasPhoto: false, file: null
-  }
-];
-
 export default function Operations() {
   const [activeTab, setActiveTab] = useState("incidents");
   const [expandedBranch, setExpandedBranch] = useState(null);
   const [incidents, setIncidents] = useState([]);
   const [debtRadar, setDebtRadar] = useState([]);
+  const [incidentsLoading, setIncidentsLoading] = useState(true);
 
   // Modal state for viewing files
   const [evidenceModal, setEvidenceModal] = useState(null);
+  const toDisplayDate = (isoOrDate) => {
+    const d = new Date(isoOrDate);
+    if (Number.isNaN(d.valueOf())) return "--";
+    return d.toLocaleString();
+  };
 
-  // Pull incidents logged by attendants from localStorage
+  // Pull incidents logged by attendants from backend.
   useEffect(() => {
-    const loadReports = () => {
+    let cancelled = false;
+    const loadReports = async () => {
       try {
-        const ownerRaw = localStorage.getItem("vp_owner_incidents");
-        const debtRaw = localStorage.getItem("vp_debt_radar");
-
-        // Use a Map to ensure unique IDs across static and local storage data
-        const uniqueIncidentsMap = new Map();
-
-        // 1. Add static incidents first
-        STATIC_INCIDENTS.forEach(inc => uniqueIncidentsMap.set(inc.id, inc));
-
-        // 2. Add/Overwrite with local storage incidents
-        if (ownerRaw) {
-          const parsedOwner = JSON.parse(ownerRaw);
-          parsedOwner.forEach(inc => {
-            const isVideoFile = inc.file && inc.file.startsWith('data:video');
-            const isImageFile = inc.file && inc.file.startsWith('data:image');
-
-            uniqueIncidentsMap.set(inc.id, {
-              ...inc,
-              category: inc.type === "Property Damage" ? "Property Damage" :
-                inc.type === "Customer Dispute" ? "Customer Dispute" : inc.type,
-              status: inc.status === "Admin CCTV Review Needed" ? "Pending Review" : inc.status,
-              hasVideo: !!inc.hasVideo || isVideoFile,
-              hasPhoto: !!inc.hasPhoto || isImageFile,
-              file: inc.file || null
-            });
-          });
-        }
-
-        setIncidents(Array.from(uniqueIncidentsMap.values()));
-
-        // 3. Handle Debt Radar Deduplication
-        if (debtRaw) {
-          const uniqueDebtMap = new Map();
-          const parsedDebt = JSON.parse(debtRaw);
-
-          parsedDebt.forEach(d => {
-            const isVideoFile = d.file && d.file.startsWith('data:video');
-            const isImageFile = d.file && d.file.startsWith('data:image');
-            uniqueDebtMap.set(d.id, {
-              ...d,
-              hasVideo: !!d.hasVideo || isVideoFile,
-              hasPhoto: !!d.hasPhoto || isImageFile,
-              file: d.file || null
-            });
-          });
-          setDebtRadar(Array.from(uniqueDebtMap.values()));
-        } else {
-          setDebtRadar([]);
-        }
+        const data = await apiClient.get("/owner/operations/incidents");
+        if (cancelled) return;
+        setIncidents(Array.isArray(data?.incidents) ? data.incidents : []);
+        setDebtRadar(Array.isArray(data?.debtRadar) ? data.debtRadar : []);
       } catch (err) {
+        if (cancelled) return;
         console.error("Error loading incidents:", err);
+        setIncidents([]);
+        setDebtRadar([]);
+      } finally {
+        if (!cancelled) setIncidentsLoading(false);
       }
     };
 
     loadReports();
-    window.addEventListener("storage", loadReports);
-    return () => window.removeEventListener("storage", loadReports);
+    return () => {
+      cancelled = true;
+    };
   }, [activeTab]);
+
+  void incidentsLoading;
 
   const handleDismissDebtRadar = (id) => {
     setDebtRadar(prev => prev.filter(d => d.id !== id));
-    try {
-      const rawSaved = JSON.parse(localStorage.getItem("vp_debt_radar") || "[]");
-      const updatedSaved = rawSaved.filter(r => r.id !== id);
-      localStorage.setItem("vp_debt_radar", JSON.stringify(updatedSaved));
-    } catch (e) { }
   };
 
-  const handleMarkResolved = (inc) => {
+  const handleMarkResolved = async (inc) => {
+    try {
+      await apiClient.patch(`/owner/operations/incidents/${inc.id}/status`, { status: "resolved" });
+    } catch (e) {
+      console.error("Failed to persist resolved status:", e);
+    }
     if (inc.isDebtRadar) {
       handleDismissDebtRadar(inc.id);
     } else {
-      setIncidents(prev => prev.map(i => i.id === inc.id ? { ...i, status: "Resolved" } : i));
+      setIncidents(prev => prev.map(i => i.id === inc.id ? { ...i, status: "resolved", statusLabel: "Resolved" } : i));
     }
   };
 
-  const handleForward = (inc) => {
+  const handleForward = async (inc) => {
+    try {
+      await apiClient.patch(`/owner/operations/incidents/${inc.id}/status`, { status: "forwarded" });
+    } catch (e) {
+      console.error("Failed to persist forwarded status:", e);
+    }
     if (inc.isDebtRadar) {
-      setDebtRadar(prev => prev.map(i => i.id === inc.id ? { ...i, status: "Forwarded to Authority" } : i));
+      setDebtRadar(prev => prev.map(i => i.id === inc.id ? { ...i, status: "forwarded", statusLabel: "Forwarded to Authority" } : i));
     } else {
-      setIncidents(prev => prev.map(i => i.id === inc.id ? { ...i, status: "Forwarded to Authority" } : i));
+      setIncidents(prev => prev.map(i => i.id === inc.id ? { ...i, status: "forwarded", statusLabel: "Forwarded to Authority" } : i));
     }
   };
 
@@ -256,23 +215,7 @@ export default function Operations() {
   // ── Incidents tab ──────────────────────────────────────────────────────────
   const renderIncidents = () => {
 
-    const formattedDebtRadar = debtRadar.map(d => ({
-      id: d.id,
-      branch: d.branch || "Current Branch",
-      zone: d.zone || "N/A",
-      spot: d.spot || "N/A",
-      date: d.time || d.timeFlagged || new Date().toLocaleString(),
-      plates: [d.plate],
-      category: "Fled Without Payment",
-      description: d.details || d.reason || `Vehicle fled without paying.`,
-      amount: d.amount || d.debtAmount,
-      attendantName: d.attendantName || "Attendant",
-      status: d.status || "Pending",
-      hasVideo: d.hasVideo || false,
-      hasPhoto: d.hasPhoto || false,
-      file: d.file || null,
-      isDebtRadar: true
-    }));
+    const formattedDebtRadar = debtRadar.map(d => ({ ...d, isDebtRadar: true }));
 
     // FINAL Deduplication before rendering (Ensures no crashes)
     const uniqueCombinedMap = new Map();
@@ -304,7 +247,7 @@ export default function Operations() {
 
                   <div className="flex items-center justify-between gap-2 w-full min-w-0">
                     <span className="font-mono font-black text-xs md:text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/20 px-2 py-0.5 rounded tracking-widest truncate min-w-0">
-                      {inc.plate}
+                      {(Array.isArray(inc.plates) && inc.plates[0]) || inc.plate || "UNKNOWN"}
                     </span>
                     <span className="text-[10px] md:text-xs font-bold text-red-500 shrink-0 whitespace-nowrap">
                       {(inc.amount || inc.debtAmount)?.toFixed(2)} ETB
@@ -353,8 +296,8 @@ export default function Operations() {
             if (isDispute) badgeBg = "bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-500";
 
             let statusPill = "border border-amber-200 dark:border-[#78350f] text-amber-700 dark:text-[#f59e0b]";
-            if (inc.status === "Forwarded to Authority") statusPill = "border border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-500";
-            if (inc.status === "Resolved") statusPill = "border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-500";
+            if (inc.status === "forwarded") statusPill = "border border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-500";
+            if (inc.status === "resolved") statusPill = "border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-500";
 
             // Determine Media Button State
             const hasMedia = inc.hasVideo || inc.hasPhoto || !!inc.file;
@@ -390,7 +333,7 @@ export default function Operations() {
                       <span className="text-xs text-zinc-500 font-mono tracking-widest">{inc.id}</span>
                     </div>
                     <span className={`px-4 py-1.5 rounded-full text-xs font-bold ${statusPill}`}>
-                      {inc.status}
+                      {inc.statusLabel || (inc.status === "resolved" ? "Resolved" : inc.status === "forwarded" ? "Forwarded to Authority" : "Pending")}
                     </span>
                   </div>
 
@@ -413,12 +356,12 @@ export default function Operations() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 mt-6">
                     <div>
                       <span className="block text-[10px] uppercase font-bold text-zinc-500 tracking-widest mb-1.5">Date/Time</span>
-                      <span className="text-xs md:text-sm font-bold text-zinc-900 dark:text-white">{inc.date}</span>
+                      <span className="text-xs md:text-sm font-bold text-zinc-900 dark:text-white">{toDisplayDate(inc.createdAt || inc.date)}</span>
                     </div>
                     <div>
                       <span className="block text-[10px] uppercase font-bold text-zinc-500 tracking-widest mb-1.5">Plates Involved</span>
                       <div className="flex flex-wrap gap-2">
-                        {inc.plates.map(p => (
+                        {(Array.isArray(inc.plates) && inc.plates.length ? inc.plates : (inc.plate ? [inc.plate] : ["UNKNOWN"])).map(p => (
                           <span key={p} className="text-[11px] md:text-xs font-mono font-bold bg-zinc-200 dark:bg-[#18181b] text-zinc-900 dark:text-white px-2 py-1 rounded">
                             {p}
                           </span>
@@ -445,7 +388,7 @@ export default function Operations() {
                     {mediaIcon} <span className="truncate">{mediaText}</span>
                   </button>
 
-                  {inc.status !== 'Resolved' && (
+                  {inc.status !== 'resolved' && (
                     <div className="flex flex-col gap-3 mt-auto pt-4 md:pt-0">
                       <button
                         type="button"
@@ -488,7 +431,7 @@ export default function Operations() {
           { key: "health", label: "System Health", Icon: Activity },
           {
             key: "incidents", label: "Incidents", Icon: FileText,
-            badge: incidents.filter(i => i.status === "Pending" || i.status === "Pending Review" || i.status === "Admin CCTV Review Needed").length + debtRadar.length
+            badge: incidents.filter(i => i.status === "pending").length + debtRadar.length
           },
         ].map(({ key, label, Icon, badge }) => (
           <button

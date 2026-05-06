@@ -2,19 +2,23 @@ import React, { useState, useEffect, useRef } from "react";
 import { Car, Moon, Sun, User, Clock, Bell, ChevronDown, LogOut } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "../../context/ThemeContext";
+import { useAuth } from "../../context/AuthContext";
+import { resolveDriverProfilePhoto } from "../../utils/resolveDriverProfilePhoto";
 
 export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
+  const auth = useAuth();
 
   // Route checkers
   const isDriverApp = location.pathname.includes("/driver") || location.pathname.includes("/profile") || location.pathname.includes("/session");
   const isSessionPage = location.pathname.includes("/session");
 
   // --- GLOBAL STATE SYNCS ---
-  const [profilePhoto, setProfilePhoto] = useState(() => localStorage.getItem("vp_driver_photo") || null);
-  const [userName, setUserName] = useState(() => localStorage.getItem("vp_driver_name") || "Abebe Kebede");
+  const [profilePhoto, setProfilePhoto] = useState(null);
+  const [userName, setUserName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
   const [sessionState, setSessionState] = useState(() => localStorage.getItem("vp_session_state") || "Discovery");
   const [secondsLeft, setSecondsLeft] = useState(0);
 
@@ -51,20 +55,49 @@ export function Header() {
     }
   };
 
-  // --- SYNC PROFILE PHOTO & NAME ---
+  // --- SYNC FROM AUTH (driver) + LOCAL PROFILE EDITS ---
   useEffect(() => {
-    const handleProfileUpdate = () => {
-      setProfilePhoto(localStorage.getItem("vp_driver_photo"));
-      setUserName(localStorage.getItem("vp_driver_name") || "Abebe Kebede");
+    const user = auth.user;
+    const authed = auth.isAuthenticated;
+    queueMicrotask(() => {
+      if (!authed || user?.role !== "driver") {
+        setUserName("");
+        setUserEmail("");
+        setProfilePhoto(null);
+        return;
+      }
+
+      const lsPhoto = localStorage.getItem("vp_driver_photo");
+      setProfilePhoto(resolveDriverProfilePhoto(user, lsPhoto));
+
+      setUserName(user.name || "");
+      setUserEmail(user.email || "");
+    });
+  }, [auth.isAuthenticated, auth.user]);
+
+  useEffect(() => {
+    const handlePhotoUpdate = () => {
+      const ls = localStorage.getItem("vp_driver_photo");
+      const u = auth.user;
+      if (u?.role === "driver") {
+        setProfilePhoto(resolveDriverProfilePhoto(u, ls));
+      } else {
+        setProfilePhoto(null);
+      }
     };
-    window.addEventListener("vp_photo_updated", handleProfileUpdate);
+    const handleProfileUpdate = () => {
+      setUserName(localStorage.getItem("vp_driver_name") || auth.user?.name || "");
+      setUserEmail(localStorage.getItem("vp_driver_email") || auth.user?.email || "");
+      handlePhotoUpdate();
+    };
+    window.addEventListener("vp_photo_updated", handlePhotoUpdate);
     window.addEventListener("vp_profile_updated", handleProfileUpdate);
 
     return () => {
-      window.removeEventListener("vp_photo_updated", handleProfileUpdate);
+      window.removeEventListener("vp_photo_updated", handlePhotoUpdate);
       window.removeEventListener("vp_profile_updated", handleProfileUpdate);
     };
-  }, []);
+  }, [auth.user]);
 
   // --- GLOBAL TIMER & NOTIFICATION ENGINE ---
   useEffect(() => {
@@ -147,14 +180,7 @@ export function Header() {
   };
 
   const handleLogout = () => {
-    Object.keys(localStorage).forEach(key => {
-      const persistentKeys = ["vp_theme", "vp_driver_photo", "vp_driver_name", "vp_driver_email", "vp_driver_vehicle", "vp_driver_license_plate", "vp_driver_payment", "vp_driver_account"];
-      if (key.startsWith("vp_") && !persistentKeys.includes(key)) {
-        localStorage.removeItem(key);
-      }
-    });
-    window.dispatchEvent(new Event("vp_photo_updated"));
-    window.dispatchEvent(new Event("vp_profile_updated"));
+    auth.logout();
     setDropdownOpen(false);
     navigate("/login", { replace: true });
   };
@@ -206,7 +232,7 @@ export function Header() {
                   <User className="h-4 w-4 sm:h-5 sm:w-5 text-zinc-400" />
                 )}
               </div>
-              <span className="font-bold text-sm text-zinc-900 dark:text-white hidden sm:block max-w-[120px] truncate">{userName}</span>
+              <span className="font-bold text-sm text-zinc-900 dark:text-white hidden sm:block max-w-[120px] truncate">{userName || "Driver"}</span>
               <ChevronDown className="h-4 w-4 text-zinc-500 shrink-0 hidden sm:block" />
             </button>
 
@@ -214,8 +240,8 @@ export function Header() {
               <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-[#121214] border border-zinc-200 dark:border-white/10 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right">
 
                 <div className="px-4 py-3 border-b border-zinc-100 dark:border-white/5 bg-zinc-50 dark:bg-white/5">
-                  <p className="text-sm font-bold text-zinc-900 dark:text-white truncate">{userName}</p>
-                  <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400 truncate">Driver</p>
+                  <p className="text-sm font-bold text-zinc-900 dark:text-white truncate">{userName || "Driver"}</p>
+                  <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400 truncate">{userEmail || "Driver account"}</p>
                 </div>
 
                 <div className="p-2 space-y-1">

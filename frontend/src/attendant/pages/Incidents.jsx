@@ -1,55 +1,17 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
     ShieldAlert, AlertTriangle, FileText,
     CarFront, Banknote, Camera, Video, Edit3,
     CheckCircle, Globe, Hash, Send, Clock,
     Plus, Trash2, X, RefreshCcw
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
 
-// --- MOCK RECENT INCIDENTS ---
-const INITIAL_INCIDENTS = [
-    {
-        id: "INC-992",
-        plate: "UNKNOWN",
-        type: "Property Damage",
-        details: "Hit AA 11223 while backing out",
-        amount: null,
-        time: "2 hours ago",
-        status: "Admin CCTV Review Needed",
-        destination: "owner"
-    },
-    {
-        id: "INC-991",
-        plate: "UN 90112",
-        type: "Customer Dispute",
-        details: "Driver argued aggressively about overstay penalty fee.",
-        amount: null,
-        time: "Yesterday",
-        status: "Report Filed",
-        destination: "owner"
-    }
-];
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
 const isFleeingType = (t) => t === "Fled Without Payment";
 
-const pushToOwnerIncidents = (incident) => {
-    try {
-        const existing = JSON.parse(localStorage.getItem("vp_owner_incidents") || "[]");
-        localStorage.setItem("vp_owner_incidents", JSON.stringify([incident, ...existing]));
-        return true;
-    } catch (e) {
-        console.error("Local Storage Error:", e);
-        return false;
-    }
-};
-
-const pushToDebtRadar = (incident) => {
-    try {
-        const existing = JSON.parse(localStorage.getItem("vp_debt_radar") || "[]");
-        localStorage.setItem("vp_debt_radar", JSON.stringify([incident, ...existing]));
-    } catch (_) { }
-};
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const MAX_FILES = 5;
 
 export default function IncidentLogger() {
     const [incidentType, setIncidentType] = useState("Fled Without Payment");
@@ -57,14 +19,21 @@ export default function IncidentLogger() {
     const [amount, setAmount] = useState("");
     const [description, setDescription] = useState("");
     const [damagedPlates, setDamagedPlates] = useState([""]);
+    /** @type {[{ id: string, file: File, type: 'photo' | 'video', previewUrl: string, name: string }]} */
     const [mediaFiles, setMediaFiles] = useState([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [incidents, setIncidents] = useState(INITIAL_INCIDENTS);
+    const [incidents, setIncidents] = useState([]);
     const [toastMessage, setToastMessage] = useState("");
     const [toastType, setToastType] = useState("success");
+    const [loadingIncidents, setLoadingIncidents] = useState(true);
+    const [error, setError] = useState(null);
 
     const photoInputRef = useRef(null);
     const videoInputRef = useRef(null);
+    const cancelledRef = useRef(false);
+
+    void loadingIncidents;
+    void error;
 
     const showToast = (msg, type = "success") => {
         setToastMessage(msg);
@@ -76,49 +45,94 @@ export default function IncidentLogger() {
     const handleRemoveDamagedPlate = (i) => { const p = [...damagedPlates]; p.splice(i, 1); setDamagedPlates(p); };
     const handleDamagedPlateChange = (i, v) => { const p = [...damagedPlates]; p[i] = v.toUpperCase(); setDamagedPlates(p); };
 
-    // Handles file upload with a 1.5MB safeguard to prevent localStorage from crashing
     const handleFileUpload = (e, type) => {
-        const files = Array.from(e.target.files);
+        const files = Array.from(e.target.files || []);
         if (!files.length) return;
 
-        files.forEach(file => {
-            if (file.size > 1.5 * 1024 * 1024) {
-                showToast(`${file.name} is too large for the local prototype cache. Sending a mock reference instead.`, "error");
-                setMediaFiles(prev => [...prev, {
-                    id: Math.random().toString(36).substr(2, 9),
-                    name: file.name,
-                    type,
-                    data: "MOCK_FILE_TOO_LARGE"
-                }]);
-                return;
+        setMediaFiles((prev) => {
+            const room = MAX_FILES - prev.length;
+            if (room <= 0) {
+                showToast(`You can attach at most ${MAX_FILES} files per report.`, "error");
+                return prev;
             }
-
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                setMediaFiles(prev => [...prev, {
-                    id: Math.random().toString(36).substr(2, 9),
-                    name: file.name,
+            const next = [...prev];
+            for (const file of files.slice(0, room)) {
+                const max = type === "video" ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+                if (file.size > max) {
+                    showToast(
+                        `${file.name} is too large (${type === "video" ? "max 50MB video" : "max 10MB image"}).`,
+                        "error"
+                    );
+                    continue;
+                }
+                const id = Math.random().toString(36).slice(2, 11);
+                const previewUrl = URL.createObjectURL(file);
+                next.push({
+                    id,
+                    file,
                     type,
-                    data: event.target.result
-                }]);
-            };
-            reader.readAsDataURL(file);
+                    previewUrl,
+                    name: file.name,
+                });
+            }
+            if (files.length > room) {
+                showToast(`Only the first ${room} additional file(s) were added (max ${MAX_FILES} total).`, "error");
+            }
+            return next;
         });
         e.target.value = null;
     };
 
-    const removeMedia = (id) => setMediaFiles(prev => prev.filter(m => m.id !== id));
+    const removeMedia = (id) => {
+        setMediaFiles((prev) => {
+            const row = prev.find((m) => m.id === id);
+            if (row?.previewUrl) URL.revokeObjectURL(row.previewUrl);
+            return prev.filter((m) => m.id !== id);
+        });
+    };
 
     const clearForm = () => {
+        setMediaFiles((prev) => {
+            prev.forEach((m) => {
+                if (m.previewUrl) URL.revokeObjectURL(m.previewUrl);
+            });
+            return [];
+        });
         setIncidentType("Fled Without Payment");
         setOffenderPlate("");
         setAmount("");
         setDescription("");
         setDamagedPlates([""]);
-        setMediaFiles([]);
     };
 
-    const handleSubmit = (e) => {
+    const fetchRecentIncidents = async () => {
+        try {
+            const rows = await apiClient.get("/attendant/incidents/recent");
+            if (cancelledRef.current) return;
+            setIncidents(Array.isArray(rows) ? rows : []);
+            setError(null);
+        } catch (e) {
+            if (!cancelledRef.current) {
+                console.error("IncidentLogger recent fetch failed:", e);
+                setError(e);
+                setIncidents([]);
+            }
+        } finally {
+            if (!cancelledRef.current) {
+                setLoadingIncidents(false);
+            }
+        }
+    };
+
+    useEffect(() => {
+        cancelledRef.current = false;
+        fetchRecentIncidents();
+        return () => {
+            cancelledRef.current = true;
+        };
+    }, []);
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
         const isDamage = incidentType === "Property Damage";
 
@@ -130,65 +144,37 @@ export default function IncidentLogger() {
         }
 
         setIsSubmitting(true);
-        setTimeout(() => {
+        try {
             const finalPlate = offenderPlate.trim() ? offenderPlate.toUpperCase() : "UNKNOWN";
             const isUnknown = finalPlate === "UNKNOWN";
 
             let detailsText = description;
+            const validDamagedPlates = damagedPlates.filter(p => p.trim());
             if (incidentType === "Property Damage") {
-                const valid = damagedPlates.filter(p => p.trim());
-                detailsText = valid.length ? `Hit: ${valid.join(", ")}. ${description}` : description || "Property Damage";
+                detailsText = validDamagedPlates.length ? `Hit: ${validDamagedPlates.join(", ")}. ${description}` : description || "Property Damage";
             }
 
-            const destination = isFleeingType(incidentType) ? "debt_radar" : "owner";
-
-            const status = isUnknown
-                ? "Admin CCTV Review Needed"
-                : isFleeingType(incidentType)
-                    ? "Global Watchlist Active"
-                    : "Pending";
-
-            const newIncident = {
-                id: `INC-${Math.floor(100 + Math.random() * 900)}`,
-                plate: finalPlate,
-                type: incidentType,
-                details: detailsText,
+            const payload = {
+                incidentType,
+                offenderPlate: finalPlate,
                 amount: isFleeingType(incidentType) ? parseFloat(amount) || 0 : null,
-                time: "Just Now",
-                status,
-                destination,
-                branch: "Bole Premium Lot",
-                zone: "Main Gate",
-                spot: "N/A",
-                date: new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
-                plates: isDamage
-                    ? damagedPlates.filter(p => p.trim())
-                    : finalPlate !== "UNKNOWN" ? [finalPlate] : [],
-                category: incidentType,
                 description: detailsText,
-                hasVideo: mediaFiles.some(m => m.type === "video"),
-                hasPhoto: mediaFiles.some(m => m.type === "photo"),
-                file: mediaFiles.length > 0 ? mediaFiles[0].data : null,
-                attendantName: "Kebede Alemu",
-                attendantId: "1234 5678 9012 3456"
+                damagedPlates: isDamage ? validDamagedPlates : [],
+                media: [],
             };
 
-            // Route to Owner's main incident list
-            const saveSuccess = pushToOwnerIncidents(newIncident);
+            const created = await apiClient.post("/attendant/incidents", payload);
 
-            if (!saveSuccess) {
-                showToast("CRITICAL ERROR: Browser storage is full. Please clear cache or upload a smaller file.", "error");
-                setIsSubmitting(false);
-                return;
+            if (mediaFiles.length > 0 && created?.attendantIncidentId) {
+                const fd = new FormData();
+                mediaFiles.forEach((m) => fd.append("files", m.file, m.name));
+                await apiClient.postFormData(
+                    `/uploads/incidents/${created.attendantIncidentId}/evidence`,
+                    fd
+                );
             }
 
-            // Route to Debt Radar if applicable
-            if (isFleeingType(incidentType)) {
-                pushToDebtRadar(newIncident);
-            }
-
-            setIncidents(prev => [newIncident, ...prev]);
-            setIsSubmitting(false);
+            setIncidents((prev) => [created, ...prev]);
 
             if (isUnknown) {
                 showToast("Report logged. Admin notified to pull CCTV for hit-and-run.");
@@ -199,7 +185,12 @@ export default function IncidentLogger() {
             }
 
             clearForm();
-        }, 1200);
+        } catch (err) {
+            console.error("IncidentLogger create failed:", err);
+            showToast(err?.message || "Failed to submit incident report. Please try again.", "error");
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const glassGreenInputStyles = "w-full bg-white dark:bg-black/40 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white outline-none focus:bg-emerald-50 dark:focus:bg-emerald-500/10 focus:border-emerald-500 focus:shadow-[0_0_15px_rgba(16,185,129,0.15)] transition-all rounded-xl";
@@ -207,7 +198,6 @@ export default function IncidentLogger() {
     return (
         <div className="h-full w-full flex flex-col xl:flex-row gap-6 animate-in fade-in duration-500 relative">
 
-            {/* TOAST */}
             {toastMessage && (
                 <div className={`fixed top-16 lg:top-20 left-1/2 -translate-x-1/2 text-white font-bold text-xs md:text-sm px-6 py-3 rounded-2xl shadow-2xl z-[8000] animate-in slide-in-from-top-4 flex items-center gap-3 w-11/12 md:w-auto text-center justify-center ${toastType === "error" ? "bg-red-600" : "bg-zinc-900 dark:bg-white dark:text-zinc-900"}`}>
                     {toastType === "error"
@@ -218,13 +208,11 @@ export default function IncidentLogger() {
                 </div>
             )}
 
-            <input type="file" accept="image/*" multiple ref={photoInputRef} onChange={e => handleFileUpload(e, "photo")} className="hidden" />
-            <input type="file" accept="video/*" multiple ref={videoInputRef} onChange={e => handleFileUpload(e, "video")} className="hidden" />
+            <input type="file" accept="image/jpeg,image/png,image/webp" multiple ref={photoInputRef} onChange={e => handleFileUpload(e, "photo")} className="hidden" />
+            <input type="file" accept="video/mp4,video/quicktime,.mov,.mp4" multiple ref={videoInputRef} onChange={e => handleFileUpload(e, "video")} className="hidden" />
 
-            {/* LEFT COLUMN: Report Form */}
             <div className="flex-1 xl:max-w-[65%] flex flex-col gap-6 min-w-0">
 
-                {/* Header card */}
                 <div className="bg-white dark:bg-[#121214] rounded-3xl p-5 md:p-6 shadow-sm border border-zinc-200 dark:border-white/5 shrink-0 flex items-center justify-between relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-4 opacity-5">
                         <ShieldAlert className="h-24 w-24 md:h-32 md:w-32 text-zinc-900 dark:text-white" />
@@ -234,15 +222,13 @@ export default function IncidentLogger() {
                             <AlertTriangle className="h-6 w-6 md:h-7 md:w-7 text-amber-500 shrink-0" />
                             <span className="truncate">Incident Logger</span>
                         </h2>
-                        <p className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 mt-1 truncate">Report manually registered fleeing vehicles, damages, or disputes.</p>
+                        <p className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 mt-1 truncate">Report manually registered fleeing vehicles, damages, or disputes. Evidence uploads to secure cloud storage.</p>
                     </div>
                 </div>
 
-                {/* Main Form */}
                 <div className="flex-1 bg-white dark:bg-[#121214] rounded-3xl shadow-sm border border-zinc-200 dark:border-white/5 p-4 md:p-8 flex flex-col min-w-0">
                     <form onSubmit={handleSubmit} className="space-y-6 flex-1 flex flex-col min-w-0">
 
-                        {/* Row 1: Incident Type */}
                         <div className="min-w-0">
                             <label className="block text-xs md:text-sm font-bold uppercase tracking-widest text-zinc-500 mb-2 flex items-center gap-2">
                                 <AlertTriangle className="h-4 w-4 shrink-0" /> Select Incident Type
@@ -261,7 +247,6 @@ export default function IncidentLogger() {
                             </div>
                         </div>
 
-                        {/* Row 2: Offender Info */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 min-w-0">
                             <div className="min-w-0">
                                 <label className="block text-[10px] md:text-sm font-bold uppercase tracking-widest text-zinc-500 mb-2 flex items-center gap-2">
@@ -300,7 +285,6 @@ export default function IncidentLogger() {
                             )}
                         </div>
 
-                        {/* Row 3: Property Damage */}
                         {incidentType === "Property Damage" && (
                             <div className="p-4 md:p-5 bg-zinc-50 dark:bg-black/20 border border-zinc-200 dark:border-white/5 rounded-2xl space-y-4 animate-in fade-in min-w-0">
                                 <label className="block text-xs md:text-sm font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-2">
@@ -329,7 +313,6 @@ export default function IncidentLogger() {
                             </div>
                         )}
 
-                        {/* Row 4: Description */}
                         <div className="flex-1 flex flex-col min-w-0">
                             <label className="block text-xs md:text-sm font-bold uppercase tracking-widest text-zinc-500 mb-2 flex items-center gap-2">
                                 <Edit3 className="h-4 w-4 shrink-0" /> Incident Description
@@ -341,9 +324,9 @@ export default function IncidentLogger() {
                             />
                         </div>
 
-                        {/* Row 5: Media Uploads */}
                         <div className="min-w-0">
-                            <label className="block text-[10px] md:text-sm font-bold uppercase tracking-widest text-zinc-500 mb-2">Evidence Upload</label>
+                            <label className="block text-[10px] md:text-sm font-bold uppercase tracking-widest text-zinc-500 mb-2">Evidence Upload (max {MAX_FILES} files)</label>
+                            <p className="text-[10px] text-zinc-400 mb-2">Images: JPEG, PNG, Webp up to 10MB each. Videos: MP4 or MOV up to 50MB each.</p>
                             <div className="flex flex-wrap gap-2 md:gap-3 mb-3">
                                 <button type="button" onClick={() => photoInputRef.current.click()}
                                     className="px-4 md:px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] md:text-xs font-bold transition-colors flex items-center gap-2 outline-none cursor-pointer shadow-sm active:scale-95">
@@ -369,7 +352,6 @@ export default function IncidentLogger() {
                             )}
                         </div>
 
-                        {/* Actions Footer */}
                         <div className="pt-4 md:pt-6 border-t border-zinc-100 dark:border-white/5 flex flex-col sm:flex-row gap-3 md:gap-4">
                             <button type="button" onClick={clearForm}
                                 className="w-full sm:flex-1 py-3.5 md:py-4 bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 rounded-xl font-bold transition-colors outline-none cursor-pointer shadow-sm active:scale-95 text-sm">
@@ -390,7 +372,6 @@ export default function IncidentLogger() {
                 </div>
             </div>
 
-            {/* RIGHT COLUMN: Recent Incident Log */}
             <div className="w-full xl:w-[35%] h-[500px] md:h-[600px] xl:h-auto bg-white dark:bg-[#121214] rounded-3xl shadow-sm border border-zinc-200 dark:border-white/5 flex flex-col shrink-0 min-w-0">
                 <div className="p-4 md:p-6 border-b border-zinc-100 dark:border-white/5 flex items-center justify-between shrink-0 bg-zinc-50 dark:bg-[#18181b] rounded-t-3xl">
                     <div className="flex items-center gap-3">

@@ -9,6 +9,7 @@ import {
   MapPin, Clock, ShieldAlert, Plus, Trash2, CarFront, 
   X, ChevronDown, ChevronUp, Check, Map, Grid, Settings, CheckCircle
 } from "lucide-react"; // ✅ ADDED: ChevronUp for the custom stepper
+import { apiClient } from "../../api/apiClient";
 
 // --- REQUIRED CONSTANTS FROM SPECIFICATION ---
 const REGION_GROUPS = [
@@ -30,28 +31,43 @@ const VEHICLE_CATEGORIES = [
   "Machineries | Upto 5000KG weight", "Machineries | 5001–10,000KG weight", "Machineries | Above 10,001KG weight"
 ];
 
-// MOCK INITIAL DATA
-const INITIAL_BRANCHES = [
-  {
-    id: "br_01", name: "Adama Bus Terminal Parking", region: "Oromia Region", city: "Adama",
-    address: "Terminal St, Adama", latitude: "8.5414", longitude: "39.2689",
-    serviceType: "Day Service Only", openTime: "06:00 AM", closeTime: "06:00 PM", overstayMultiplier: 1.75,
-    zones: [
-      { 
-        id: "z_01", name: "Zone A (Light)", allowedCategories: ["Bicycle | Bicycle", "Motorcycle | Motorcycle"], 
-        spots: [
-          { id: "A01", status: "Occupied", allowedCategories: ["Motorcycle | Motorcycle"] }, 
-          { id: "A02", status: "Free", allowedCategories: ["Motorcycle | Motorcycle"] },
-          { id: "A03", status: "Free", allowedCategories: ["Motorcycle | Motorcycle"] }
-        ] 
-      },
-      { 
-        id: "z_02", name: "Zone B (Buses)", allowedCategories: ["Public Transport Vehicles | Upto 12 Seats"], 
-        spots: [{ id: "B01", status: "Reserved", allowedCategories: ["Public Transport Vehicles | Upto 12 Seats"] }] 
-      }
-    ]
-  }
-];
+const INITIAL_BRANCHES = [];
+const isValidObjectId = (id) => typeof id === "string" && /^[a-fA-F0-9]{24}$/.test(id);
+const normalizeSpotStatus = (status) => {
+  const v = String(status || "").toLowerCase();
+  if (v === "reserved") return "Reserved";
+  if (v === "occupied") return "Occupied";
+  return "Free";
+};
+const toUiSpot = (spot) => ({
+  _id: String(spot?._id || ""),
+  id: String(spot?.spotCode || spot?.id || ""),
+  status: normalizeSpotStatus(spot?.status),
+  allowedCategories: Array.isArray(spot?.allowedCategories) ? spot.allowedCategories : [],
+});
+const toUiZone = (zone) => ({
+  id: String(zone?._id || zone?.id || ""),
+  _id: String(zone?._id || zone?.id || ""),
+  name: String(zone?.name || ""),
+  allowedCategories: Array.isArray(zone?.allowedCategories) ? zone.allowedCategories : [],
+  spots: [],
+});
+const toUiBranch = (lot) => ({
+  id: String(lot?._id || lot?.id || ""),
+  _id: String(lot?._id || lot?.id || ""),
+  lotId: String(lot?._id || lot?.id || ""),
+  name: lot?.name || "",
+  region: lot?.region || "",
+  city: lot?.city || "",
+  address: lot?.address || "",
+  latitude: lot?.location?.coordinates?.[1] != null ? String(lot.location.coordinates[1]) : "",
+  longitude: lot?.location?.coordinates?.[0] != null ? String(lot.location.coordinates[0]) : "",
+  serviceType: "Day Service Only",
+  openTime: "06:00 AM",
+  closeTime: "06:00 PM",
+  overstayMultiplier: lot?.overstayMultiplier ?? 1,
+  zones: [],
+});
 
 // --- UTILITY: Generate Row Letters (A, B, C... Z, AA, AB) ---
 const getRowLetter = (index) => {
@@ -161,8 +177,8 @@ const PremiumTimePicker = ({ label, value, onChange }) => {
 
 export default function ParkingManagement() {
   const [branches, setBranches] = useState(INITIAL_BRANCHES);
-  const [selectedBranchId, setSelectedBranchId] = useState(INITIAL_BRANCHES[0]?.id || null);
-  const [selectedZoneId, setSelectedZoneId] = useState(INITIAL_BRANCHES[0]?.zones[0]?.id || null);
+  const [selectedBranchId, setSelectedBranchId] = useState(null);
+  const [selectedZoneId, setSelectedZoneId] = useState(null);
   
   const [activeDropdown, setActiveDropdown] = useState(null); 
 
@@ -186,6 +202,9 @@ export default function ParkingManagement() {
   const [newBranch, setNewBranch] = useState({ name: "", region: "Addis Ababa", city: "Addis Ababa", address: "", latitude: "", longitude: "", serviceType: "Day Service Only", openTime: "06:00 AM", closeTime: "06:00 PM", overstayMultiplier: "1.75" });
   const [newZone, setNewZone] = useState({ name: "", allowedCategories: [] });
   const [newSpot, setNewSpot] = useState({ id: "", status: "Free", allowedCategories: [] });
+  const [isSubmittingZone, setIsSubmittingZone] = useState(false);
+  const [isSubmittingSpot, setIsSubmittingSpot] = useState(false);
+  const [isSubmittingGrid, setIsSubmittingGrid] = useState(false);
   
   const [gridConfig, setGridConfig] = useState({ rows: 10, cols: 12, prefix: "", status: "Free", allowedCategories: [] });
   const [editingSpot, setEditingSpot] = useState(null);
@@ -193,6 +212,72 @@ export default function ParkingManagement() {
 
   const activeBranch = branches.find(b => b.id === selectedBranchId);
   const activeZone = activeBranch?.zones.find(z => z.id === selectedZoneId) || activeBranch?.zones[0];
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const lots = await apiClient.get("/parking/lots");
+        const mappedLots = Array.isArray(lots) ? lots.map(toUiBranch) : [];
+
+        const lotsWithZones = await Promise.all(
+          mappedLots.map(async (branch) => {
+            if (!isValidObjectId(branch.lotId)) return branch;
+            try {
+              const zones = await apiClient.get(`/parking/zones?lotId=${branch.lotId}`);
+              const mappedZones = Array.isArray(zones) ? zones.map(toUiZone) : [];
+              return { ...branch, zones: mappedZones };
+            } catch {
+              return branch;
+            }
+          })
+        );
+
+        const hydrated = await Promise.all(
+          lotsWithZones.map(async (branch) => {
+            const zonesWithSpots = await Promise.all(
+              (branch.zones || []).map(async (zone) => {
+                if (!isValidObjectId(zone._id || zone.id)) return zone;
+                try {
+                  const spots = await apiClient.get(`/parking/spots?zoneId=${zone._id || zone.id}`);
+                  return { ...zone, spots: Array.isArray(spots) ? spots.map(toUiSpot) : [] };
+                } catch {
+                  return zone;
+                }
+              })
+            );
+            return { ...branch, zones: zonesWithSpots };
+          })
+        );
+
+        if (!cancelled) {
+          setBranches(hydrated);
+          setSelectedBranchId(hydrated[0]?.id || null);
+          setSelectedZoneId(hydrated[0]?.zones?.[0]?.id || null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBranches([]);
+          setSelectedBranchId(null);
+          setSelectedZoneId(null);
+          setCustomAlert({ type: "error", title: "Failed to Load Lots", message: error?.message || "Unable to load lots." });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeBranch) {
+      setSelectedZoneId(null);
+      return;
+    }
+    if (!activeBranch.zones.some((z) => z.id === selectedZoneId)) {
+      setSelectedZoneId(activeBranch.zones[0]?.id || null);
+    }
+  }, [activeBranch, selectedZoneId]);
 
   // Hide tooltips dynamically on scroll to prevent "floating" detached tips
   useEffect(() => {
@@ -212,64 +297,165 @@ export default function ParkingManagement() {
   );
 
   // --- CRUD OPERATIONS ---
-  const handleCreateBranch = (e) => {
+  const handleCreateBranch = async (e) => {
     e.preventDefault();
-    const newId = `br_${Date.now()}`;
-    setBranches([...branches, { ...newBranch, id: newId, overstayMultiplier: parseFloat(newBranch.overstayMultiplier), zones: [] }]);
-    setSelectedBranchId(newId);
-    setBranchModalOpen(false);
+    try {
+      const payload = {
+        name: newBranch.name,
+        region: newBranch.region,
+        city: newBranch.city,
+        address: newBranch.address,
+        overstayMultiplier: parseFloat(newBranch.overstayMultiplier || "1.75"),
+      };
+      if (newBranch.latitude && newBranch.longitude) {
+        payload.location = {
+          type: "Point",
+          coordinates: [Number(newBranch.longitude), Number(newBranch.latitude)],
+        };
+      }
+      const created = await apiClient.post("/parking/lots", payload);
+      const nextBranch = toUiBranch(created);
+      setBranches((prev) => [...prev, nextBranch]);
+      setSelectedBranchId(nextBranch.id);
+      setSelectedZoneId(null);
+      setBranchModalOpen(false);
+      setCustomAlert({ type: "success", title: "Branch Created", message: `Branch "${nextBranch.name}" created successfully.` });
+    } catch (error) {
+      setCustomAlert({ type: "error", title: "Create Branch Failed", message: error?.message || "Failed to create branch." });
+    }
   };
 
-  const handleCreateZone = (e) => {
+  const handleCreateZone = async (e) => {
     e.preventDefault();
     if (!activeBranch) return;
-    const zId = `z_${Date.now()}`;
-    const updatedBranches = branches.map(b => b.id === activeBranch.id ? { ...b, zones: [...b.zones, { ...newZone, id: zId, spots: [] }] } : b);
-    setBranches(updatedBranches);
-    setSelectedZoneId(zId);
-    setZoneModalOpen(false);
-    setNewZone({ name: "", allowedCategories: [] });
+    if (!isValidObjectId(activeBranch.lotId || activeBranch.id)) {
+      setCustomAlert({ type: "error", title: "Invalid Lot", message: "Selected lotId is invalid." });
+      return;
+    }
+    setIsSubmittingZone(true);
+    try {
+      const payload = {
+        lotId: activeBranch.lotId || activeBranch.id,
+        name: newZone.name,
+      };
+      if (newZone.allowedCategories.length > 0) payload.allowedCategories = newZone.allowedCategories;
+      const created = await apiClient.post("/parking/zones", payload);
+      const createdId = String(created?._id || "");
+      const createdZone = {
+        id: createdId,
+        _id: createdId,
+        name: created?.name || newZone.name,
+        allowedCategories: Array.isArray(created?.allowedCategories) ? created.allowedCategories : newZone.allowedCategories,
+        spots: [],
+      };
+      const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? { ...b, zones: [...b.zones, createdZone] } : b));
+      setBranches(updatedBranches);
+      setSelectedZoneId(createdZone.id);
+      setZoneModalOpen(false);
+      setNewZone({ name: "", allowedCategories: [] });
+      setCustomAlert({ type: "success", title: "Zone Created", message: `Zone "${createdZone.name}" created successfully.` });
+    } catch (error) {
+      setCustomAlert({ type: "error", title: "Create Zone Failed", message: error?.message || "Failed to create zone." });
+    } finally {
+      setIsSubmittingZone(false);
+    }
   };
 
   const handleUpdateZone = (e) => {
     e.preventDefault();
-    if (!activeBranch || !editingZone) return;
-    const updatedBranches = branches.map(b => b.id === activeBranch.id ? {
-      ...b, zones: b.zones.map(z => z.id === editingZone.id ? { ...z, name: editingZone.name } : z)
-    } : b);
-    setBranches(updatedBranches);
-    setEditZoneModalOpen(false);
+    (async () => {
+      if (!activeBranch || !editingZone) return;
+      if (!isValidObjectId(editingZone._id || editingZone.id)) {
+        setCustomAlert({ type: "error", title: "Invalid Zone", message: "Selected zoneId is invalid." });
+        return;
+      }
+      const current = activeBranch.zones.find((z) => z.id === editingZone.id);
+      const patch = {};
+      if (editingZone.name !== current?.name) patch.name = editingZone.name;
+      if (Object.keys(patch).length === 0) {
+        setEditZoneModalOpen(false);
+        return;
+      }
+      try {
+        const updated = await apiClient.patch(`/parking/zones/${editingZone._id || editingZone.id}`, patch);
+        const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? {
+          ...b,
+          zones: b.zones.map((z) => (z.id === editingZone.id ? { ...z, ...toUiZone({ ...z, ...updated }) } : z)),
+        } : b));
+        setBranches(updatedBranches);
+        setEditZoneModalOpen(false);
+      } catch (error) {
+        setCustomAlert({ type: "error", title: "Update Zone Failed", message: error?.message || "Failed to update zone." });
+      }
+    })();
   };
 
   const handleDeleteZone = () => {
-    if (!activeBranch || !editingZone) return;
-    const updatedBranches = branches.map(b => b.id === activeBranch.id ? {
-      ...b, zones: b.zones.filter(z => z.id !== editingZone.id)
-    } : b);
-    setBranches(updatedBranches);
-    setSelectedZoneId(updatedBranches.find(b => b.id === activeBranch.id)?.zones[0]?.id || null);
-    setEditZoneModalOpen(false);
+    (async () => {
+      if (!activeBranch || !editingZone) return;
+      if (!isValidObjectId(editingZone._id || editingZone.id)) {
+        setCustomAlert({ type: "error", title: "Invalid Zone", message: "Selected zoneId is invalid." });
+        return;
+      }
+      try {
+        await apiClient.delete(`/parking/zones/${editingZone._id || editingZone.id}`);
+        const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? {
+          ...b, zones: b.zones.filter((z) => z.id !== editingZone.id),
+        } : b));
+        setBranches(updatedBranches);
+        setSelectedZoneId(updatedBranches.find((b) => b.id === activeBranch.id)?.zones[0]?.id || null);
+        setEditZoneModalOpen(false);
+      } catch (error) {
+        setCustomAlert({ type: "error", title: "Delete Zone Failed", message: error?.message || "Failed to delete zone." });
+      }
+    })();
   };
 
-  const handleCreateSpot = (e) => {
+  const handleCreateSpot = async (e) => {
     e.preventDefault();
     if (!activeBranch || !activeZone) return;
-    
+    if (!isValidObjectId(activeBranch.lotId || activeBranch.id)) {
+      setCustomAlert({ type: "error", title: "Invalid Lot", message: "Selected lotId is invalid." });
+      return;
+    }
+    if (!isValidObjectId(activeZone._id || activeZone.id)) {
+      setCustomAlert({ type: "error", title: "Invalid Zone", message: "Selected zoneId is invalid." });
+      return;
+    }
+
     if (activeZone.spots.some(s => s.id === newSpot.id)) {
       return setCustomAlert({ type: 'error', title: 'Duplicate Spot ID', message: 'A spot with this ID already exists in this zone.' });
     }
 
-    const updatedBranches = branches.map(b => b.id === activeBranch.id ? {
-      ...b, zones: b.zones.map(z => z.id === activeZone.id ? { ...z, spots: [...z.spots, { ...newSpot, allowedCategories: newSpot.allowedCategories.length > 0 ? newSpot.allowedCategories : z.allowedCategories }] } : z)
-    } : b);
-    setBranches(updatedBranches);
-    setSpotModalOpen(false);
-    setNewSpot({ id: "", status: "Free", allowedCategories: [] });
+    setIsSubmittingSpot(true);
+    try {
+      const payload = {
+        lotId: activeBranch.lotId || activeBranch.id,
+        zoneId: activeZone._id || activeZone.id,
+        spotCode: newSpot.id,
+      };
+      const allowed = newSpot.allowedCategories.length > 0 ? newSpot.allowedCategories : activeZone.allowedCategories;
+      if (allowed.length > 0) payload.allowedCategories = allowed;
+      const created = await apiClient.post("/parking/spots", payload);
+      const uiSpot = toUiSpot({ ...created, allowedCategories: created?.allowedCategories ?? allowed });
+      const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? {
+        ...b, zones: b.zones.map((z) => (z.id === activeZone.id ? { ...z, spots: [...z.spots, uiSpot] } : z))
+      } : b));
+      setBranches(updatedBranches);
+      setSpotModalOpen(false);
+      setNewSpot({ id: "", status: "Free", allowedCategories: [] });
+      setCustomAlert({ type: "success", title: "Spot Created", message: `Spot "${uiSpot.id}" created successfully.` });
+    } catch (error) {
+      setCustomAlert({ type: "error", title: "Create Spot Failed", message: error?.message || "Failed to create spot." });
+    } finally {
+      setIsSubmittingSpot(false);
+    }
   };
 
   // --- GRID GENERATOR LOGIC ---
-  const handleGenerateGrid = (e) => {
+  const handleGenerateGrid = async (e) => {
     e.preventDefault();
+    if (!activeBranch || !activeZone) return;
     const total = gridConfig.rows * gridConfig.cols;
     
     if (total > 500) {
@@ -278,74 +464,182 @@ export default function ParkingManagement() {
 
     let generated = 0;
     let skipped = 0;
-    const newSpots = [];
-    const existingIds = new Set(activeZone.spots.map(s => s.id));
-
+    const lotId = activeBranch.lotId || activeBranch.id;
+    const zoneId = activeZone._id || activeZone.id;
+    if (!isValidObjectId(lotId)) {
+      setCustomAlert({ type: "error", title: "Invalid Lot", message: "Selected lotId is invalid." });
+      return;
+    }
+    if (!isValidObjectId(zoneId)) {
+      setCustomAlert({ type: "error", title: "Invalid Zone", message: "Selected zoneId is invalid." });
+      return;
+    }
+    const allowedCategories = gridConfig.allowedCategories.length > 0 ? gridConfig.allowedCategories : activeZone.allowedCategories;
+    const candidates = [];
     for (let r = 0; r < gridConfig.rows; r++) {
       const rowStr = getRowLetter(r);
       for (let c = 1; c <= gridConfig.cols; c++) {
-        const spotId = `${gridConfig.prefix}${gridConfig.prefix ? '-' : ''}${rowStr}${c}`;
-        
-        if (!existingIds.has(spotId)) {
-          newSpots.push({
-            id: spotId,
-            status: gridConfig.status,
-            allowedCategories: gridConfig.allowedCategories.length > 0 ? gridConfig.allowedCategories : activeZone.allowedCategories
-          });
-          existingIds.add(spotId);
-          generated++;
-        } else {
-          skipped++;
-        }
+        candidates.push(`${gridConfig.prefix}${gridConfig.prefix ? "-" : ""}${rowStr}${c}`);
       }
     }
+    // Re-sync spot codes from backend to avoid duplicate create failures when local state is stale.
+    let existingCodes = new Set(activeZone.spots.map((s) => s.id));
+    try {
+      const latestSpots = await apiClient.get(`/parking/spots?zoneId=${zoneId}`);
+      if (Array.isArray(latestSpots)) {
+        existingCodes = new Set(latestSpots.map((s) => String(s.spotCode || s.id || "")));
+        const merged = latestSpots.map(toUiSpot);
+        setBranches((prev) =>
+          prev.map((b) =>
+            b.id === activeBranch.id
+              ? {
+                  ...b,
+                  zones: b.zones.map((z) =>
+                    z.id === activeZone.id ? { ...z, spots: merged } : z
+                  ),
+                }
+              : b
+          )
+        );
+      }
+    } catch {
+      // If list endpoint fails, continue with current UI state.
+    }
 
-    const updatedBranches = branches.map(b => b.id === activeBranch.id ? {
-      ...b, zones: b.zones.map(z => z.id === activeZone.id ? { ...z, spots: [...z.spots, ...newSpots] } : z)
-    } : b);
-    
+    const missing = candidates.filter((id) => !existingCodes.has(id));
+    skipped += candidates.length - missing.length;
+    const createdSpots = [];
+    setIsSubmittingGrid(true);
+    try {
+      let usedBulk = false;
+      try {
+        const bulkPayload = {
+          lotId,
+          zoneId,
+          spots: missing.map((code) => ({
+            spotCode: code,
+            ...(allowedCategories.length > 0 ? { allowedCategories } : {}),
+          })),
+        };
+        const bulkResult = await apiClient.post("/parking/spots/bulk", bulkPayload);
+        const createdItems = Array.isArray(bulkResult?.created)
+          ? bulkResult.created
+          : Array.isArray(bulkResult)
+            ? bulkResult
+            : [];
+        createdSpots.push(...createdItems.map(toUiSpot));
+        generated = createdSpots.length;
+        skipped += Math.max(0, missing.length - generated);
+        usedBulk = true;
+      } catch {
+        usedBulk = false;
+      }
+
+      if (!usedBulk) {
+        const chunkSize = 20;
+        for (let i = 0; i < missing.length; i += chunkSize) {
+          const chunk = missing.slice(i, i + chunkSize);
+          const results = await Promise.all(
+            chunk.map(async (code) => {
+              try {
+                const payload = { lotId, zoneId, spotCode: code };
+                if (allowedCategories.length > 0) payload.allowedCategories = allowedCategories;
+                const created = await apiClient.post("/parking/spots", payload);
+                return { ok: true, spot: toUiSpot({ ...created, allowedCategories: created?.allowedCategories ?? allowedCategories }) };
+              } catch {
+                return { ok: false };
+              }
+            })
+          );
+          results.forEach((r) => {
+            if (r.ok) {
+              createdSpots.push(r.spot);
+              generated++;
+            } else {
+              skipped++;
+            }
+          });
+        }
+      }
+    } finally {
+      setIsSubmittingGrid(false);
+    }
+    const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? {
+      ...b, zones: b.zones.map((z) => (z.id === activeZone.id ? { ...z, spots: [...z.spots, ...createdSpots] } : z))
+    } : b));
     setBranches(updatedBranches);
     setGridModalOpen(false);
-    setCustomAlert({ 
-      type: 'success', 
-      title: 'Grid Generated', 
-      message: `${generated} parking spots successfully generated.\n${skipped > 0 ? `(${skipped} duplicates skipped)` : ''}` 
+    setCustomAlert({
+      type: generated > 0 ? "success" : "error",
+      title: generated > 0 ? "Grid Generated" : "Grid Generation Failed",
+      message: `${generated} parking spots successfully generated.\n${skipped > 0 ? `(${skipped} skipped or failed)` : ""}`,
     });
   };
 
   // --- SPOT MANAGEMENT LOGIC ---
   const handleUpdateSpot = (e) => {
     e.preventDefault();
-    if (!activeBranch || !activeZone || !editingSpot) return;
-
-    if (editingSpot.id !== editingSpot.originalId && activeZone.spots.some(s => s.id === editingSpot.id)) {
-      return setCustomAlert({ type: 'error', title: 'Duplicate Spot ID', message: 'A spot with this ID already exists.' });
-    }
-
-    const updatedBranches = branches.map(b => b.id === activeBranch.id ? {
-      ...b, zones: b.zones.map(z => z.id === activeZone.id ? {
-        ...z, spots: z.spots.map(s => s.id === editingSpot.originalId ? { id: editingSpot.id, status: editingSpot.status, allowedCategories: editingSpot.allowedCategories } : s)
-      } : z)
-    } : b);
-
-    setBranches(updatedBranches);
-    setEditSpotModalOpen(false);
+    (async () => {
+      if (!activeBranch || !activeZone || !editingSpot) return;
+      if (!isValidObjectId(editingSpot._id)) {
+        setCustomAlert({ type: "error", title: "Invalid Spot", message: "Selected spotId is invalid." });
+        return;
+      }
+      if (editingSpot.id !== editingSpot.originalId && activeZone.spots.some((s) => s.id === editingSpot.id)) {
+        setCustomAlert({ type: "error", title: "Duplicate Spot ID", message: "A spot with this ID already exists." });
+        return;
+      }
+      const original = activeZone.spots.find((s) => s.id === editingSpot.originalId);
+      const patch = {};
+      if (editingSpot.id !== original?.id) patch.spotCode = editingSpot.id;
+      if (JSON.stringify(editingSpot.allowedCategories || []) !== JSON.stringify(original?.allowedCategories || [])) {
+        patch.allowedCategories = editingSpot.allowedCategories || [];
+      }
+      if (Object.keys(patch).length === 0) {
+        setEditSpotModalOpen(false);
+        return;
+      }
+      try {
+        const updated = await apiClient.patch(`/parking/spots/${editingSpot._id}`, patch);
+        const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? {
+          ...b,
+          zones: b.zones.map((z) => (z.id === activeZone.id ? {
+            ...z,
+            spots: z.spots.map((s) => (s.id === editingSpot.originalId ? { ...s, ...toUiSpot({ ...s, ...updated }) } : s)),
+          } : z)),
+        } : b));
+        setBranches(updatedBranches);
+        setEditSpotModalOpen(false);
+      } catch (error) {
+        setCustomAlert({ type: "error", title: "Update Spot Failed", message: error?.message || "Failed to update spot." });
+      }
+    })();
   };
 
   const handleDeleteSpot = () => {
-    if (!activeBranch || !activeZone || !editingSpot) return;
-    const updatedBranches = branches.map(b => b.id === activeBranch.id ? {
-      ...b, zones: b.zones.map(z => z.id === activeZone.id ? {
-        ...z, spots: z.spots.filter(s => s.id !== editingSpot.originalId)
-      } : z)
-    } : b);
-
-    setBranches(updatedBranches);
-    setEditSpotModalOpen(false);
+    (async () => {
+      if (!activeBranch || !activeZone || !editingSpot) return;
+      if (!isValidObjectId(editingSpot._id)) {
+        setCustomAlert({ type: "error", title: "Invalid Spot", message: "Selected spotId is invalid." });
+        return;
+      }
+      try {
+        await apiClient.delete(`/parking/spots/${editingSpot._id}`);
+        const updatedBranches = branches.map((b) => (b.id === activeBranch.id ? {
+          ...b, zones: b.zones.map((z) => (z.id === activeZone.id ? {
+            ...z, spots: z.spots.filter((s) => s.id !== editingSpot.originalId),
+          } : z)),
+        } : b));
+        setBranches(updatedBranches);
+        setEditSpotModalOpen(false);
+      } catch (error) {
+        setCustomAlert({ type: "error", title: "Delete Spot Failed", message: error?.message || "Failed to delete spot." });
+      }
+    })();
   };
 
   const openSpotEditor = (spot) => {
-    setEditingSpot({ ...spot, originalId: spot.id, allowedCategories: spot.allowedCategories || activeZone.allowedCategories });
+    setEditingSpot({ ...spot, originalId: spot.id, allowedCategories: spot.allowedCategories || activeZone.allowedCategories, zoneObjectId: activeZone?._id || activeZone?.id });
     setTooltipConfig(null); // Hide tooltip when editing
     setEditSpotModalOpen(true);
   };
@@ -482,7 +776,21 @@ export default function ParkingManagement() {
                   <p className="text-sm text-zinc-500 mt-1"><Map className="inline h-3.5 w-3.5 mr-1"/> {activeBranch.address} (Lat: {activeBranch.latitude}, Lng: {activeBranch.longitude})</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
-                  <button className="p-2 text-zinc-400 hover:text-red-500 bg-zinc-50 dark:bg-white/5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
+                  <button onClick={async () => {
+                    if (!activeBranch || !isValidObjectId(activeBranch._id || activeBranch.id)) {
+                      setCustomAlert({ type: "error", title: "Invalid Lot", message: "Selected lotId is invalid." });
+                      return;
+                    }
+                    try {
+                      await apiClient.delete(`/parking/lots/${activeBranch._id || activeBranch.id}`);
+                      const nextBranches = branches.filter((b) => b.id !== activeBranch.id);
+                      setBranches(nextBranches);
+                      setSelectedBranchId(nextBranches[0]?.id || null);
+                      setSelectedZoneId(nextBranches[0]?.zones?.[0]?.id || null);
+                    } catch (error) {
+                      setCustomAlert({ type: "error", title: "Delete Branch Failed", message: error?.message || "Failed to delete branch." });
+                    }
+                  }} className="p-2 text-zinc-400 hover:text-red-500 bg-zinc-50 dark:bg-white/5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </div>
             </div>
@@ -719,7 +1027,7 @@ export default function ParkingManagement() {
             <form onSubmit={handleCreateZone} className="flex flex-col gap-5">
               <div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Zone Name</label><input required type="text" value={newZone.name} onChange={e=>setNewZone({...newZone, name: e.target.value})} className="w-full bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-sm rounded-xl px-4 py-3.5 outline-none focus:border-emerald-500 transition-colors" /></div>
               <DropdownTrigger label={`Allowed Categories (${newZone.allowedCategories.length})`} value={newZone.allowedCategories.length > 0 ? "Multiple Selected" : "Select..."} onClick={() => setActiveDropdown('categories')} />
-              <button type="submit" disabled={newZone.allowedCategories.length === 0} className="w-full mt-4 bg-emerald-500 text-zinc-950 font-bold py-4 rounded-xl disabled:opacity-50 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-base">Save Zone</button>
+              <button type="submit" disabled={newZone.allowedCategories.length === 0 || isSubmittingZone} className="w-full mt-4 bg-emerald-500 text-zinc-950 font-bold py-4 rounded-xl disabled:opacity-50 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-base">Save Zone</button>
             </form>
           </div>
         </div>
@@ -738,7 +1046,7 @@ export default function ParkingManagement() {
               <div className="space-y-1.5"><label className="text-xs font-bold uppercase tracking-wider text-zinc-500">Spot ID</label><input required type="text" placeholder="e.g. A01" value={newSpot.id} onChange={e=>setNewSpot({...newSpot, id: e.target.value.toUpperCase()})} className="w-full bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 text-sm rounded-xl px-4 py-3.5 outline-none focus:border-emerald-500 font-mono font-bold transition-colors" /></div>
               <DropdownTrigger label="Initial Status" value={newSpot.status} onClick={() => setActiveDropdown('spotStatus')} />
               <DropdownTrigger label={`Allowed Categories (${newSpot.allowedCategories.length || activeZone?.allowedCategories.length})`} value={newSpot.allowedCategories.length > 0 ? "Custom Override" : "Inherit from Zone"} onClick={() => setActiveDropdown('newSpotCategories')} />
-              <button type="submit" className="w-full mt-4 bg-emerald-500 text-zinc-950 font-bold py-4 rounded-xl shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-base">Save Spot</button>
+              <button type="submit" disabled={isSubmittingSpot} className="w-full mt-4 bg-emerald-500 text-zinc-950 font-bold py-4 rounded-xl disabled:opacity-50 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-base">Save Spot</button>
             </form>
           </div>
         </div>

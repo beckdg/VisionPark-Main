@@ -4,6 +4,7 @@ import { Eye, EyeOff, Mail, Lock, AlertCircle, Loader2, Check } from "lucide-rea
 import { GlassCard } from "../../components/ui/GlassCard";
 import { Header } from "../../components/layout/Header";
 import { useTheme } from "../../context/ThemeContext";
+import { useAuth } from "../../context/AuthContext";
 
 export default function Login() {
   const { setTheme } = useTheme();
@@ -14,6 +15,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const navigate = useNavigate();
+  const auth = useAuth();
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("vp_theme");
@@ -26,25 +28,23 @@ export default function Login() {
     setError(null);
     setIsLoading(true);
 
-    if (password === "error") {
-      setTimeout(() => {
-        setIsLoading(false);
-        setError("Invalid credentials. Please verify your email and password.");
-      }, 800);
-      return;
-    }
-
-    setTimeout(() => {
-      setIsLoading(false);
-      const userEmail = email.toLowerCase();
-      if (userEmail.includes("owner")) {
-        navigate("/owner/dashboard");
-      } else if (userEmail.includes("guard") || userEmail.includes("attendant")) {
-        navigate("/attendant/dashboard");
+    try {
+      const user = await auth.login(email, password);
+      const role = user?.role;
+      if (role === "owner") {
+        navigate("/owner");
+      } else if (role === "attendant") {
+        navigate("/attendant");
+      } else if (role === "admin") {
+        navigate("/admin");
       } else {
-        navigate("/driver/map");
+        navigate("/driver");
       }
-    }, 1500);
+    } catch (err) {
+      setError(err?.message || "Login failed.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

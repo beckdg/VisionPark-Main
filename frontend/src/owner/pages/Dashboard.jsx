@@ -12,7 +12,7 @@
  * Layer 1 (Physical): Represents the global network of IP cameras updating spot statuses.
  */
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Car, CheckCircle, MapPin, TrendingUp,
   Calendar, Clock, Banknote, Filter, ChevronDown, X, Check
@@ -21,6 +21,7 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip,
   AreaChart, Area, XAxis, YAxis, CartesianGrid
 } from "recharts";
+import { apiClient } from "../../api/apiClient";
 
 // --- STRUCTURED DATA FOR CUSTOM DROPDOWNS ---
 const REGION_GROUPS = [
@@ -47,44 +48,18 @@ const BRANCHES_BY_CITY = {
   "All Cities": ["All Branches"]
 };
 
-// --- MOCK DATA ---
-const DASHBOARD_STATS = {
-  activeSessions: 142,
-  availableSpots: 58,
-  occupiedSpots: 142,
-  revenueToday: 12450
-};
-
-// Donut chart: occupied vs available
-const OCCUPANCY_DATA = [
-  { name: "Occupied", value: 142, color: "#f59e0b" },
-  { name: "Available", value: 58, color: "#10b981" },
-];
-
-// Revenue per hour area chart
-const REVENUE_DATA = [
-  { hour: "08:00", etb: 820 },
-  { hour: "09:00", etb: 1640 },
-  { hour: "10:00", etb: 1230 },
-  { hour: "11:00", etb: 2870 },
-  { hour: "12:00", etb: 3480 },
-  { hour: "13:00", etb: 2460 },
-  { hour: "14:00", etb: 3690 },
-  { hour: "15:00", etb: 4100 },
-];
-
-const RECENT_ACTIVITY = [
-  { id: 1, plate: "AA 12345", category: "Public Transport", branch: "Bole Airport Parking", entry: "08:15 AM", exit: "--", duration: "2h 15m", payment: "Telebirr" },
-  { id: 2, plate: "DR 98765", category: "Dry Freight", branch: "Adama Bus Terminal", entry: "09:30 AM", exit: "10:15 AM", duration: "45m", payment: "CBE" },
-  { id: 3, plate: "MO 55521", category: "Motorcycle", branch: "Piazza Street Parking", entry: "10:00 AM", exit: "--", duration: "30m", payment: "COOP" },
-  { id: 4, plate: "AA 11223", category: "Public Transport", branch: "Bole Airport Parking", entry: "07:00 AM", exit: "10:00 AM", duration: "3h 0m", payment: "Wallet" },
-];
-
 export default function Dashboard() {
   const [region, setRegion] = useState("All Regions");
   const [city, setCity] = useState("All Cities");
   const [branch, setBranch] = useState("All Branches");
   const [activeDropdown, setActiveDropdown] = useState(null);
+
+  // --- LIVE DASHBOARD DATA ---
+  const [stats, setStats] = useState(null);
+  const [occupancyData, setOccupancyData] = useState(null);
+  const [revenueData, setRevenueData] = useState([]);
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const closeDropdown = () => setActiveDropdown(null);
 
@@ -115,6 +90,105 @@ export default function Dashboard() {
     setBranch(nextBranch);
     closeDropdown();
   };
+
+  const buildScopeParams = () => {
+    const params = new URLSearchParams();
+    if (region && region !== "All Regions") params.set("region", region);
+    if (city && city !== "All Cities") params.set("city", city);
+    if (branch && branch !== "All Branches") params.set("branch", branch);
+    return params;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const safeGet = async (url) => {
+      try {
+        return await apiClient.get(url);
+      } catch (error) {
+        // Fail silently: the UI should still render with whatever data we have.
+        console.error("Dashboard analytics request failed:", url, error);
+        return null;
+      }
+    };
+
+    (async () => {
+      setLoading(true);
+
+      const scopeParams = buildScopeParams();
+      const scopeSuffix = scopeParams.toString() ? `?${scopeParams.toString()}` : "";
+
+      const revenueParams = buildScopeParams();
+      revenueParams.set("range", "today");
+      const revenueSuffix = `?${revenueParams.toString()}`;
+
+      const [dash, occ, rev, act] = await Promise.all([
+        safeGet(`/analytics/owner/dashboard${scopeSuffix}`),
+        safeGet(`/analytics/owner/occupancy${scopeSuffix}`),
+        safeGet(`/analytics/owner/revenue${revenueSuffix}`),
+        safeGet(`/analytics/owner/recent-activity${scopeSuffix}`),
+      ]);
+
+      if (cancelled) return;
+
+      setStats(dash || null);
+
+      if (Array.isArray(occ)) {
+        setOccupancyData(
+          occ.map((item) => ({
+            name: item?.name,
+            value: Number(item?.value ?? 0),
+            color: item?.name === "Occupied" ? "#f59e0b" : "#10b981",
+          }))
+        );
+      } else {
+        setOccupancyData(null);
+      }
+
+      if (Array.isArray(rev)) {
+        setRevenueData(
+          rev.map((row) => ({
+            hour: row?.hour,
+            etb: Number(row?.etb ?? 0),
+          }))
+        );
+      } else {
+        setRevenueData([]);
+      }
+
+      if (Array.isArray(act)) {
+        // Map backend analytics contract -> existing table row contract.
+        setRecentActivity(
+          act.map((row, idx) => ({
+            id: row?.id ?? idx,
+            plate: row?.plateNumber ?? "--",
+            category: row?.vehicleCategory ?? "--",
+            branch: row?.branchName ?? "--",
+            entry: row?.entryTime ?? "--",
+            exit: row?.exitTime ?? "--",
+            duration: row?.duration ?? "--",
+            payment: row?.paymentMethod ?? "--",
+          }))
+        );
+      } else {
+        setRecentActivity([]);
+      }
+
+      setLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [region, city, branch]);
+
+  const occupiedValue =
+    occupancyData?.find((d) => d?.name === "Occupied")?.value ?? 0;
+  const availableValue =
+    occupancyData?.find((d) => d?.name === "Available")?.value ?? 0;
+  const totalSpots = occupiedValue + availableValue;
+  const fullnessPct =
+    totalSpots > 0 ? Math.round((occupiedValue / totalSpots) * 100) : 0;
 
   // ── CUSTOM TOOLTIPS ────────────────────────────────────────────────────────
   // Same dark card pattern as Analytics — value color matches the data slice/line.
@@ -200,7 +274,7 @@ export default function Dashboard() {
             <span className="text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Active Sessions</span>
             <div className="p-2 bg-blue-50 dark:bg-blue-500/10 rounded-lg"><Car className="h-5 w-5 text-blue-500" /></div>
           </div>
-          <span className="text-3xl font-bold text-zinc-900 dark:text-white">{DASHBOARD_STATS.activeSessions}</span>
+          <span className="text-3xl font-bold text-zinc-900 dark:text-white">{stats?.activeSessions ?? 0}</span>
         </div>
 
         <div className="bg-white dark:bg-[#121214] p-6 rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm flex flex-col justify-between">
@@ -208,7 +282,7 @@ export default function Dashboard() {
             <span className="text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Available Spots</span>
             <div className="p-2 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg"><CheckCircle className="h-5 w-5 text-emerald-500" /></div>
           </div>
-          <span className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{DASHBOARD_STATS.availableSpots}</span>
+          <span className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{stats?.availableSpots ?? 0}</span>
         </div>
 
         <div className="bg-white dark:bg-[#121214] p-6 rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm flex flex-col justify-between">
@@ -216,7 +290,7 @@ export default function Dashboard() {
             <span className="text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Occupied Spots</span>
             <div className="p-2 bg-amber-50 dark:bg-amber-500/10 rounded-lg"><MapPin className="h-5 w-5 text-amber-500" /></div>
           </div>
-          <span className="text-3xl font-bold text-amber-600 dark:text-amber-500">{DASHBOARD_STATS.occupiedSpots}</span>
+          <span className="text-3xl font-bold text-amber-600 dark:text-amber-500">{stats?.occupiedSpots ?? 0}</span>
         </div>
 
         <div className="bg-white dark:bg-[#121214] p-6 rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm flex flex-col justify-between">
@@ -225,7 +299,7 @@ export default function Dashboard() {
             <div className="p-2 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg"><Banknote className="h-5 w-5 text-indigo-500" /></div>
           </div>
           <span className="text-3xl font-bold text-zinc-900 dark:text-white">
-            {DASHBOARD_STATS.revenueToday.toLocaleString()} <span className="text-lg font-medium text-zinc-500">ETB</span>
+            {Number(stats?.revenueToday ?? 0).toLocaleString()} <span className="text-lg font-medium text-zinc-500">ETB</span>
           </span>
         </div>
       </div>
@@ -242,13 +316,13 @@ export default function Dashboard() {
             <div className="relative w-[180px] h-[180px] flex items-center justify-center mx-auto">
               {/* Centered text — sits above the SVG via absolute positioning */}
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
-                <span className="text-3xl font-black text-zinc-900 dark:text-white">71%</span>
+                <span className="text-3xl font-black text-zinc-900 dark:text-white">{totalSpots ? fullnessPct : 0}%</span>
                 <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest mt-0.5">Full</span>
               </div>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={OCCUPANCY_DATA}
+                    data={loading ? [] : (occupancyData || [])}
                     cx="50%"
                     cy="50%"
                     innerRadius="68%"
@@ -259,7 +333,7 @@ export default function Dashboard() {
                     startAngle={90}
                     endAngle={-270}
                   >
-                    {OCCUPANCY_DATA.map((entry, index) => (
+                    {(loading ? [] : occupancyData || []).map((entry, index) => (
                       <Cell key={index} fill={entry.color} />
                     ))}
                   </Pie>
@@ -272,11 +346,11 @@ export default function Dashboard() {
             <div className="flex items-center justify-center gap-6 mt-4">
               <div className="flex items-center gap-2 text-sm">
                 <div className="h-3 w-3 rounded-full bg-amber-500" />
-                <span className="text-zinc-600 dark:text-zinc-400">Occupied (142)</span>
+                <span className="text-zinc-600 dark:text-zinc-400">Occupied ({occupiedValue})</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <div className="h-3 w-3 rounded-full bg-emerald-500" />
-                <span className="text-zinc-600 dark:text-zinc-400">Available (58)</span>
+                <span className="text-zinc-600 dark:text-zinc-400">Available ({availableValue})</span>
               </div>
             </div>
           </div>
@@ -290,7 +364,7 @@ export default function Dashboard() {
           </div>
           <div className="flex-1 min-h-[200px]">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={REVENUE_DATA} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
+              <AreaChart data={loading ? [] : revenueData} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
@@ -354,7 +428,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="text-sm">
-                {RECENT_ACTIVITY.map((session) => (
+                {recentActivity.map((session) => (
                   <tr key={session.id} className="border-b border-zinc-100 dark:border-white/5 last:border-0 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors">
                     <td className="py-4 font-mono font-bold text-zinc-900 dark:text-white">{session.plate}</td>
                     <td className="py-4 text-zinc-600 dark:text-zinc-300">{session.category}</td>

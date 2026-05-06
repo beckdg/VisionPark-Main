@@ -5,6 +5,7 @@ import {
     Save, X, ShieldAlert, Mail, Phone, CalendarClock,
     Camera, UploadCloud, Copy
 } from "lucide-react";
+import { apiClient } from "../../api/apiClient";
 
 // --- MOCK ACTIVITY LOG ---
 const ACTIVITY_LOG = [
@@ -34,6 +35,8 @@ export default function OwnerAccount() {
         name: "",
         email: "",
         phone: "",
+        companyName: "",
+        tinNumber: "",
         avatar: null,
         createdAt: "",
         lastLogin: "Never",
@@ -42,27 +45,24 @@ export default function OwnerAccount() {
 
     const [editData, setEditData] = useState({ ...ownerData });
 
+    const [recentOwners, setRecentOwners] = useState([]);
+
     // Setup form state (when initializing)
     const [setupData, setSetupData] = useState({
         name: "",
         email: "",
         phone: "",
+        companyName: "",
+        tinNumber: "",
         password: "",
-        avatar: null // Added avatar support for initial setup
+        avatar: null
     });
 
     const [emailError, setEmailError] = useState("");
     const [phoneError, setPhoneError] = useState("");
 
-    // --- INITIALIZATION (LocalStorage Mock Backend) ---
     useEffect(() => {
-        const savedData = localStorage.getItem("vp_owner_data");
-        if (savedData) {
-            setOwnerData(JSON.parse(savedData));
-            setAccountExists(true);
-        } else {
-            generatePassword();
-        }
+        generatePassword(true);
     }, []);
 
     // --- VALIDATORS ---
@@ -106,11 +106,11 @@ export default function OwnerAccount() {
         setTimeout(() => setToastMessage(""), 4000);
     };
 
-    const generatePassword = () => {
+    const generatePassword = (forSetupForm = false) => {
         const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
         let pass = "";
         for (let i = 0; i < 12; i++) pass += chars.charAt(Math.floor(Math.random() * chars.length));
-        if (!accountExists) setSetupData(prev => ({ ...prev, password: pass }));
+        if (forSetupForm || !accountExists) setSetupData(prev => ({ ...prev, password: pass }));
         return pass;
     };
 
@@ -130,7 +130,6 @@ export default function OwnerAccount() {
                     const updatedData = { ...ownerData, avatar: base64String };
                     setOwnerData(updatedData);
                     if (isEditing) setEditData({ ...editData, avatar: base64String });
-                    localStorage.setItem("vp_owner_data", JSON.stringify(updatedData));
                 } else {
                     setSetupData(prev => ({ ...prev, avatar: base64String }));
                 }
@@ -145,7 +144,6 @@ export default function OwnerAccount() {
             const updatedData = { ...ownerData, avatar: null };
             setOwnerData(updatedData);
             if (isEditing) setEditData({ ...editData, avatar: null });
-            localStorage.setItem("vp_owner_data", JSON.stringify(updatedData));
         } else {
             setSetupData(prev => ({ ...prev, avatar: null }));
         }
@@ -154,27 +152,81 @@ export default function OwnerAccount() {
     };
 
     // --- MAIN ACTIONS ---
-    const handleInitializeSubmit = (e) => {
+    const mapOwnerProfile = (created) => {
+        const o = created?.owner || created?.ownerProfile || {};
+        return {
+            name: created?.name ?? "",
+            email: created?.email ?? "",
+            phone: o.phone ?? "",
+            companyName: o.companyName ?? "",
+            tinNumber: o.tinNumber ?? "",
+            avatar: created?.avatarUrl ?? null,
+            createdAt: created?.createdAt
+                ? new Date(created.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                : new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+            lastLogin: "Never",
+            status: created?.status === "inactive" ? "Suspended" : "Active",
+        };
+    };
+
+    const handleInitializeSubmit = async (e) => {
         e.preventDefault();
         if (emailError || phoneError) return;
+        if (!setupData.password || setupData.password.length < 8) {
+            showToast("Password must be at least 8 characters.", "error");
+            return;
+        }
+
+        const owner = {};
+        const phoneTrim = setupData.phone.trim();
+        if (phoneTrim) owner.phone = phoneTrim;
+        const companyTrim = setupData.companyName.trim();
+        if (companyTrim) owner.companyName = companyTrim;
+        const tinTrim = setupData.tinNumber.trim();
+        if (tinTrim) owner.tinNumber = tinTrim;
+
+        const payload = {
+            name: setupData.name.trim(),
+            email: setupData.email.trim().toLowerCase(),
+            password: setupData.password,
+            owner,
+        };
+        if (setupData.avatar && typeof setupData.avatar === "string") {
+            payload.avatarUrl = setupData.avatar;
+        }
 
         setIsProcessing(true);
-        setTimeout(() => {
-            const newData = {
-                name: setupData.name,
-                email: setupData.email,
-                phone: setupData.phone,
-                avatar: setupData.avatar, // Save the uploaded photo
-                createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                lastLogin: "Never",
-                status: "Active"
-            };
+        try {
+            const created = await apiClient.post("/users/owners", payload);
+            const newData = mapOwnerProfile(created);
             setOwnerData(newData);
-            localStorage.setItem("vp_owner_data", JSON.stringify(newData));
-            setIsProcessing(false);
+            setEditData(newData);
+            setRecentOwners((prev) => [
+                ...prev,
+                {
+                    id: String(created?._id ?? created?.id ?? Date.now()),
+                    name: newData.name,
+                    email: newData.email,
+                    companyName: newData.companyName,
+                },
+            ]);
             setAccountExists(true);
             showToast("Owner account successfully provisioned!");
-        }, 1200);
+            setSetupData({
+                name: "",
+                email: "",
+                phone: "",
+                companyName: "",
+                tinNumber: "",
+                password: "",
+                avatar: null,
+            });
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        } catch (err) {
+            showToast(err?.message || "Failed to create owner.", "error");
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     const handleEditSave = () => {
@@ -182,7 +234,6 @@ export default function OwnerAccount() {
         setIsProcessing(true);
         setTimeout(() => {
             setOwnerData(editData);
-            localStorage.setItem("vp_owner_data", JSON.stringify(editData));
             setIsProcessing(false);
             setIsEditing(false);
             showToast("Owner details updated successfully.");
@@ -204,7 +255,6 @@ export default function OwnerAccount() {
         setTimeout(() => {
             const updatedData = { ...ownerData, status: newStatus };
             setOwnerData(updatedData);
-            localStorage.setItem("vp_owner_data", JSON.stringify(updatedData));
             setIsProcessing(false);
             showToast(newStatus === "Suspended" ? "Account suspended. Login access revoked." : "Account restored.", newStatus === "Suspended" ? "warning" : "success");
         }, 800);
@@ -216,9 +266,17 @@ export default function OwnerAccount() {
             setIsProcessing(false);
             setShowReinitModal(false);
             setAccountExists(false);
-            localStorage.removeItem("vp_owner_data");
-            setSetupData({ name: "", email: "", phone: "", password: "", avatar: null });
-            generatePassword();
+            setSetupData({
+                name: "",
+                email: "",
+                phone: "",
+                companyName: "",
+                tinNumber: "",
+                password: "",
+                avatar: null,
+            });
+            generatePassword(true);
+            if (fileInputRef.current) fileInputRef.current.value = "";
             showToast("Account purged. Ready for fresh initialization.", "warning");
         }, 1000);
     };
@@ -332,6 +390,24 @@ export default function OwnerAccount() {
                                     </div>
 
                                     <div className="space-y-1.5">
+                                        <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-1.5"><Building className="h-3.5 w-3.5" /> Company Name</label>
+                                        {isEditing ? (
+                                            <input type="text" value={editData.companyName} onChange={e => setEditData({ ...editData, companyName: e.target.value })} className="w-full bg-zinc-50 dark:bg-black/40 border border-zinc-200 dark:border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 transition-colors" />
+                                        ) : (
+                                            <div className="px-4 py-3 bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/5 rounded-xl text-sm font-bold text-zinc-900 dark:text-white">{ownerData.companyName || "—"}</div>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                        <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-1.5"><ShieldAlert className="h-3.5 w-3.5" /> TIN Number</label>
+                                        {isEditing ? (
+                                            <input type="text" value={editData.tinNumber} onChange={e => setEditData({ ...editData, tinNumber: e.target.value })} className="w-full bg-zinc-50 dark:bg-black/40 border border-zinc-200 dark:border-white/10 rounded-xl px-4 py-3 text-sm font-mono font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 transition-colors" />
+                                        ) : (
+                                            <div className="px-4 py-3 bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/5 rounded-xl text-sm font-mono font-bold text-zinc-900 dark:text-white">{ownerData.tinNumber || "—"}</div>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-1.5">
                                         <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 flex items-center gap-1.5"><CalendarClock className="h-3.5 w-3.5" /> Account Created</label>
                                         <div className="px-4 py-3 bg-zinc-100/50 dark:bg-white/5 border border-transparent rounded-xl text-sm font-medium text-zinc-500 dark:text-zinc-400 opacity-70 cursor-not-allowed">{ownerData.createdAt || "Just Now"}</div>
                                     </div>
@@ -357,7 +433,7 @@ export default function OwnerAccount() {
                                 </>
                             ) : (
                                 <>
-                                    <button onClick={() => setIsEditing(true)} className="flex-1 py-3 px-4 rounded-xl font-bold text-sm border-2 border-indigo-200 hover:border-indigo-600 text-indigo-700 dark:border-indigo-500/30 dark:hover:border-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-all outline-none active:scale-95 flex items-center justify-center gap-2">
+                                    <button onClick={() => { setEditData(ownerData); setIsEditing(true); }} className="flex-1 py-3 px-4 rounded-xl font-bold text-sm border-2 border-indigo-200 hover:border-indigo-600 text-indigo-700 dark:border-indigo-500/30 dark:hover:border-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-all outline-none active:scale-95 flex items-center justify-center gap-2">
                                         <Edit3 className="h-4 w-4" /> Edit Details
                                     </button>
                                     <button onClick={handleResetPassword} disabled={isProcessing} className="flex-1 py-3 px-4 rounded-xl font-bold text-sm border-2 border-amber-200 hover:border-amber-500 text-amber-700 dark:border-amber-500/30 dark:hover:border-amber-500 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 hover:bg-amber-100 dark:hover:bg-amber-500/20 transition-all outline-none active:scale-95 flex items-center justify-center gap-2 disabled:opacity-70">
@@ -501,6 +577,14 @@ export default function OwnerAccount() {
                                     </label>
                                     <input required type="tel" value={setupData.phone} onChange={e => setSetupData({ ...setupData, phone: e.target.value })} placeholder="+251 91 234 5678" className={`w-full bg-zinc-50 dark:bg-black/40 border ${phoneError ? 'border-red-500 focus:border-red-500' : 'border-zinc-200 dark:border-white/10 focus:border-indigo-500'} rounded-xl px-4 py-3.5 text-sm font-mono font-bold text-zinc-900 dark:text-white outline-none transition-colors`} />
                                 </div>
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">Company Name</label>
+                                    <input type="text" value={setupData.companyName} onChange={e => setSetupData({ ...setupData, companyName: e.target.value })} placeholder="e.g. VisionPark Logistics" className="w-full bg-zinc-50 dark:bg-black/40 border border-zinc-200 dark:border-white/10 rounded-xl px-4 py-3.5 text-sm font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 transition-colors" />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 ml-1">TIN Number</label>
+                                    <input type="text" value={setupData.tinNumber} onChange={e => setSetupData({ ...setupData, tinNumber: e.target.value })} placeholder="Tax identification number" className="w-full bg-zinc-50 dark:bg-black/40 border border-zinc-200 dark:border-white/10 rounded-xl px-4 py-3.5 text-sm font-mono font-bold text-zinc-900 dark:text-white outline-none focus:border-indigo-500 transition-colors" />
+                                </div>
                             </div>
 
                             <div className="space-y-1.5">
@@ -513,7 +597,7 @@ export default function OwnerAccount() {
                             <div className="space-y-1.5">
                                 <div className="flex items-center justify-between ml-1">
                                     <label className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Temporary Password</label>
-                                    <button type="button" onClick={generatePassword} className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 flex items-center gap-1 outline-none transition-colors">
+                                    <button type="button" onClick={() => generatePassword(true)} className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 flex items-center gap-1 outline-none transition-colors">
                                         <RefreshCw className="h-3 w-3" /> Auto-generate
                                     </button>
                                 </div>
@@ -534,7 +618,7 @@ export default function OwnerAccount() {
 
                             <button
                                 type="submit"
-                                disabled={isProcessing || !setupData.name || !setupData.email || !setupData.password || emailError || phoneError}
+                                disabled={isProcessing || !setupData.name || !setupData.email || !setupData.password || setupData.password.length < 8 || emailError || phoneError}
                                 className="w-full py-4 rounded-xl font-black text-base tracking-wide bg-indigo-600 hover:bg-indigo-500 text-white shadow-xl shadow-indigo-600/20 transition-all outline-none active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-4"
                             >
                                 {isProcessing ? <RefreshCw className="h-5 w-5 animate-spin" /> : <ShieldAlert className="h-5 w-5" />}
@@ -543,6 +627,25 @@ export default function OwnerAccount() {
 
                         </form>
                     </div>
+                </div>
+            )}
+
+            {recentOwners.length > 0 && (
+                <div className="bg-white dark:bg-[#121214] rounded-3xl border border-zinc-200 dark:border-white/5 shadow-sm overflow-hidden">
+                    <div className="px-5 py-3 border-b border-zinc-100 dark:border-white/5 bg-zinc-50 dark:bg-[#18181b] text-[10px] font-black uppercase tracking-widest text-zinc-500">
+                        Owners created this session
+                    </div>
+                    <ul className="divide-y divide-zinc-100 dark:divide-white/10 max-h-48 overflow-y-auto custom-scrollbar">
+                        {recentOwners.map((o) => (
+                            <li key={o.id} className="px-5 py-3 text-sm font-bold text-zinc-900 dark:text-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                                <span>{o.name}</span>
+                                <span className="text-xs font-mono text-zinc-500 truncate">
+                                    {o.email}
+                                    {o.companyName ? ` · ${o.companyName}` : ""}
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
                 </div>
             )}
 
