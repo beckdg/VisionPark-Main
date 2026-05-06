@@ -214,10 +214,11 @@ export default function DriverHistory() {
     return `${h.toString().padStart(2, "0")} : ${m.toString().padStart(2, "0")} : ${s.toString().padStart(2, "0")}`;
   };
 
-  const totalSpent = history.reduce(
-    (sum, session) => sum + Number(session.totalPaid ?? session.cost ?? 0),
-    0
-  );
+  /** Matches API `totalPaidAmount`: sum of all successful txs per session (reservation + parking, etc.). */
+  const totalSpent = history.reduce((sum, session) => {
+    const n = Number(session.totalPaid ?? session.cost ?? 0);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
   const totalParkedSeconds = history.reduce(
     (sum, session) =>
       sum +
@@ -246,7 +247,7 @@ export default function DriverHistory() {
 
           {/* Top Summary Card */}
           <div className="w-full bg-white dark:bg-[#121214]/95 border border-zinc-200 dark:border-white/5 rounded-3xl p-6 md:p-8 lg:p-10 shadow-sm">
-            <h2 className="text-xs md:text-sm lg:text-base font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-6 border-b border-zinc-100 dark:border-white/5 pb-4">This Month</h2>
+            <h2 className="text-xs md:text-sm lg:text-base font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-6 border-b border-zinc-100 dark:border-white/5 pb-4">Summary</h2>
             <div className="grid grid-cols-2 gap-4 md:gap-6">
               <div className="min-w-0">
                 <p className="text-[10px] md:text-xs lg:text-sm text-zinc-500 dark:text-zinc-400 uppercase font-bold tracking-wider mb-1 flex items-center gap-1.5"><Wallet className="h-3.5 w-3.5 md:h-4 md:w-4 shrink-0" /> Total Spent</p>
