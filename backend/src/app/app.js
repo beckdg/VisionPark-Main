@@ -19,6 +19,7 @@ const { attendantRoutes } = require("../modules/attendantLiveGrid");
 const { attendantAIExceptionRoutes } = require("../modules/attendantAIExceptions");
 const { attendantWalkupRoutes } = require("../modules/attendantWalkup");
 const { attendantIncidentRoutes } = require("../modules/attendantIncidents");
+const { attendantShiftReportsRoutes } = require("../modules/attendantShiftReports");
 const { ownerOperationsRoutes } = require("../modules/ownerOperations");
 const { uploadRoutes } = require("../modules/uploads");
 const { pricingRoutes } = require("../modules/pricing");
@@ -159,6 +160,7 @@ const createApp = () => {
   app.use("/api/attendant", attendantAIExceptionRoutes);
   app.use("/api/attendant", attendantWalkupRoutes);
   app.use("/api/attendant", attendantIncidentRoutes);
+  app.use("/api/attendant/shifts", attendantShiftReportsRoutes);
   app.use("/api/owner", ownerOperationsRoutes);
   app.use("/api/uploads", uploadRoutes);
   app.use("/api/pricing", pricingRoutes);
