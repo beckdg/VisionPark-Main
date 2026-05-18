@@ -18,6 +18,26 @@ router.post(
   authOtpRateLimit,
   emailVerificationController.resendEmailOtp
 );
+router.post(
+  "/forgot-password",
+  authOtpRateLimit,
+  emailVerificationController.forgotPassword
+);
+router.post(
+  "/verify-password-reset-otp",
+  authOtpRateLimit,
+  emailVerificationController.verifyPasswordResetOtp
+);
+router.post(
+  "/reset-password",
+  authOtpRateLimit,
+  emailVerificationController.resetPassword
+);
+router.post(
+  "/resend-password-reset-otp",
+  authOtpRateLimit,
+  emailVerificationController.resendPasswordResetOtp
+);
 router.get("/me", authenticate, controller.me);
 
 module.exports = router;

@@ -8,7 +8,7 @@ import { resolveDriverProfilePhoto } from "../../utils/resolveDriverProfilePhoto
 import {
   User, Car, CreditCard, Building2, Bell, HelpCircle,
   LogOut, Camera, ChevronRight, ChevronLeft, Fingerprint,
-  Check, Image as ImageIcon, Trash2, X, Edit2
+  Check, Image as ImageIcon, Trash2, X, Edit2, KeyRound, Loader2
 } from "lucide-react";
 
 const PAYMENT_OPTIONS = ["Telebirr", "CBE", "COOP", "Bank of Abyssinia"];
@@ -40,6 +40,8 @@ export default function DriverProfile() {
   const [paymentSaveError, setPaymentSaveError] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
   const [notifications, setNotifications] = useState(true);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState("");
 
   const [editForm, setEditForm] = useState({ name: "", email: "", phone: "" });
 
@@ -397,6 +399,29 @@ export default function DriverProfile() {
     navigate("/login", { replace: true });
   };
 
+  const handleChangePassword = async () => {
+    const email = (userEmail || auth.user?.email || "").trim();
+    if (!email) {
+      setChangePasswordError("No email on file. Update your profile email first.");
+      return;
+    }
+
+    setChangePasswordError("");
+    setChangingPassword(true);
+    try {
+      await apiClient.post("/auth/forgot-password", { email });
+      const params = new URLSearchParams({
+        email,
+        from: "profile",
+      });
+      navigate(`/verify-reset-otp?${params.toString()}`);
+    } catch (err) {
+      setChangePasswordError(err?.message || "Could not send verification code. Try again.");
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
   if (activeView === "payment") {
     return (
       <div className="relative h-[100dvh] w-full overflow-hidden bg-[#f4f4f5] dark:bg-[#09090b] flex flex-col">
@@ -526,6 +551,35 @@ export default function DriverProfile() {
                   <span className="font-semibold text-zinc-900 dark:text-white text-sm md:text-base lg:text-lg">Payment Method</span>
                 </div>
                 <div className="flex items-center gap-2 max-w-[50%]"><span className="text-zinc-500 dark:text-zinc-400 font-medium text-sm md:text-base lg:text-lg truncate">{paymentMethod}</span><ChevronRight className="h-5 w-5 md:h-6 md:w-6 text-zinc-400 shrink-0" /></div>
+              </button>
+            </div>
+
+            {changePasswordError ? (
+              <p className="text-sm font-medium text-red-600 dark:text-red-400 px-1" role="alert">
+                {changePasswordError}
+              </p>
+            ) : null}
+
+            <div className="w-full bg-white dark:bg-[#121214]/95 rounded-2xl md:rounded-3xl shadow-sm border border-zinc-200 dark:border-white/5 overflow-hidden">
+              <button
+                type="button"
+                onClick={handleChangePassword}
+                disabled={changingPassword}
+                className="w-full flex items-center justify-between p-4 md:p-6 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="h-9 w-9 md:h-12 md:w-12 rounded-xl bg-violet-500 flex items-center justify-center shrink-0 shadow-sm">
+                    {changingPassword ? (
+                      <Loader2 className="h-5 w-5 md:h-6 md:w-6 text-white animate-spin" />
+                    ) : (
+                      <KeyRound className="h-5 w-5 md:h-6 md:w-6 text-white" />
+                    )}
+                  </div>
+                  <span className="font-semibold text-zinc-900 dark:text-white text-sm md:text-base lg:text-lg text-left">
+                    Change Password
+                  </span>
+                </div>
+                <ChevronRight className="h-5 w-5 md:h-6 md:w-6 text-zinc-400 shrink-0" />
               </button>
             </div>
 

@@ -5,13 +5,33 @@ const { InternalServerError } = require("../../../common/errors");
 
 const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
 
-const buildOtpEmailHtml = ({ recipientName, otpCode }) => `
+const TEMPLATES = {
+  signup: {
+    title: "Email Verification",
+    subject: "Verify Your VisionPark Account",
+    intro:
+      "Use the verification code below to complete your VisionPark driver account setup.",
+    footer:
+      "If you did not create a VisionPark account, you can safely ignore this email.",
+  },
+  password_reset: {
+    title: "Password Reset",
+    subject: "Reset Your VisionPark Password",
+    intro: "Use the verification code below to reset your VisionPark account password.",
+    footer:
+      "If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.",
+  },
+};
+
+const buildOtpEmailHtml = ({ recipientName, otpCode, templateKey = "signup" }) => {
+  const template = TEMPLATES[templateKey] || TEMPLATES.signup;
+  return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Verify Your VisionPark Account</title>
+  <title>${template.subject}</title>
 </head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f5;padding:32px 16px;">
@@ -21,7 +41,7 @@ const buildOtpEmailHtml = ({ recipientName, otpCode }) => `
           <tr>
             <td style="background:linear-gradient(135deg,#059669,#10b981);padding:28px 32px;text-align:center;">
               <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:0.5px;">VisionPark</h1>
-              <p style="margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;">Email Verification</p>
+              <p style="margin:8px 0 0;color:rgba(255,255,255,0.9);font-size:14px;">${template.title}</p>
             </td>
           </tr>
           <tr>
@@ -30,7 +50,7 @@ const buildOtpEmailHtml = ({ recipientName, otpCode }) => `
                 Hi${recipientName ? ` ${recipientName}` : ""},
               </p>
               <p style="margin:0 0 24px;color:#52525b;font-size:15px;line-height:1.6;">
-                Use the verification code below to complete your VisionPark driver account setup.
+                ${template.intro}
               </p>
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                 <tr>
@@ -44,8 +64,7 @@ const buildOtpEmailHtml = ({ recipientName, otpCode }) => `
                 This code expires in <strong>10 minutes</strong>. Do not share it with anyone.
               </p>
               <p style="margin:16px 0 0;color:#a1a1aa;font-size:12px;line-height:1.6;">
-                If you did not create a VisionPark account, you can safely ignore this email.
-                Need help? Contact our support team.
+                ${template.footer} Need help? Contact our support team.
               </p>
             </td>
           </tr>
@@ -61,13 +80,17 @@ const buildOtpEmailHtml = ({ recipientName, otpCode }) => `
 </body>
 </html>
 `;
+};
 
-const sendOtpEmail = async ({ toEmail, recipientName, otpCode }) => {
+const sendOtpEmail = async ({ toEmail, recipientName, otpCode, templateKey = "signup" }) => {
+  const template = TEMPLATES[templateKey] || TEMPLATES.signup;
+
   if (env.isTest) {
     logger.info("Brevo OTP email skipped in test environment", {
       module: "emailVerification.brevo",
       toEmail,
       otpCode,
+      templateKey,
     });
     return { messageId: "test-skip" };
   }
@@ -84,9 +107,9 @@ const sendOtpEmail = async ({ toEmail, recipientName, otpCode }) => {
       email: env.brevoSenderEmail,
     },
     to: [{ email: toEmail, name: recipientName || toEmail }],
-    subject: "Verify Your VisionPark Account",
-    htmlContent: buildOtpEmailHtml({ recipientName, otpCode }),
-    textContent: `Your VisionPark verification code is: ${otpCode}\n\nThis code expires in 10 minutes. If you did not sign up, ignore this email.`,
+    subject: template.subject,
+    htmlContent: buildOtpEmailHtml({ recipientName, otpCode, templateKey }),
+    textContent: `Your VisionPark code is: ${otpCode}\n\nThis code expires in 10 minutes. ${template.footer}`,
   };
 
   try {
@@ -104,9 +127,10 @@ const sendOtpEmail = async ({ toEmail, recipientName, otpCode }) => {
       module: "emailVerification.brevo",
       status: error?.response?.status,
       message: error?.message,
+      templateKey,
     });
     throw new InternalServerError(
-      "Unable to send verification email. Please try again later."
+      "Unable to send email. Please try again later."
     );
   }
 };
@@ -114,4 +138,5 @@ const sendOtpEmail = async ({ toEmail, recipientName, otpCode }) => {
 module.exports = {
   sendOtpEmail,
   buildOtpEmailHtml,
+  TEMPLATES,
 };

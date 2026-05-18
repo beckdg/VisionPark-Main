@@ -16,6 +16,8 @@ import Login from "./shared/auth/Login";
 import DriverSignUp from "./shared/auth/DriverSignUp";
 import VerifyEmail from "./shared/auth/VerifyEmail";
 import ForgotPassword from "./shared/auth/ForgotPassword";
+import VerifyResetOtp from "./shared/auth/VerifyResetOtp";
+import ResetPassword from "./shared/auth/ResetPassword";
 import PrivacyPolicy from "./shared/pages/PrivacyPolicy";
 import GuestMap from "./guest/pages/GuestMap"; // <-- Added Guest Map
 
@@ -134,6 +136,8 @@ export default function App() {
               <Route path="/signup" element={<DriverSignUp />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/verify-reset-otp" element={<VerifyResetOtp />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/privacy-policy" element={<PrivacyPolicy />} />
               <Route
                 path="/payment/success"

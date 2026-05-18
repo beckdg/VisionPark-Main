@@ -26,12 +26,21 @@ const authenticate = async (req, res, next) => {
       return next(new UnauthorizedError("Invalid token payload."));
     }
 
-    const account = await User.findById(userId).select("role emailVerified status");
+    const account = await User.findById(userId).select(
+      "role emailVerified status passwordChangedAt"
+    );
     if (!account) {
       return next(new UnauthorizedError("Invalid or expired token."));
     }
     if (account.status !== "active") {
       return next(new UnauthorizedError("Account is not active."));
+    }
+    if (
+      account.passwordChangedAt &&
+      decoded.iat &&
+      decoded.iat * 1000 < account.passwordChangedAt.getTime()
+    ) {
+      return next(new UnauthorizedError("Session expired. Please sign in again."));
     }
     if (account.role === "driver" && account.emailVerified === false) {
       return next(

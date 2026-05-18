@@ -1,6 +1,5 @@
 const mongoose = require("mongoose");
-
-const OTP_PURPOSES = ["signup"];
+const { OTP_PURPOSES } = require("../otp.constants");
 
 const emailVerificationSchema = new mongoose.Schema(
   {
@@ -47,6 +46,10 @@ const emailVerificationSchema = new mongoose.Schema(
       index: true,
     },
     invalidatedAt: {
+      type: Date,
+      default: null,
+    },
+    consumedAt: {
       type: Date,
       default: null,
     },
