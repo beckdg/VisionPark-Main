@@ -33,23 +33,10 @@ const createApp = () => {
   app.disable("x-powered-by");
 
   const corsOptions = {
-    origin(origin, callback) {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (
-        env.corsAllowedOrigins.includes("*") ||
-        env.corsAllowedOrigins.includes(origin)
-      ) {
-        return callback(null, true);
-      }
-
-      return callback(new Error("Not allowed by CORS"));
-    },
+    origin: env.corsOrigin,
+    credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
   };
 
   // Core middleware pipeline

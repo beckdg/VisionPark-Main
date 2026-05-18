@@ -29,6 +29,18 @@ const VEHICLE_OPTIONS = [
     { group: "Machineries", items: ["Machineries | Upto 5000KG weight", "Machineries | 5001-10,000KG weight", "Machineries | Above 10,001KG weight"] }
 ];
 
+const NON_DIPLOMATIC_PLATE_REGEX = /^[A-Z]?[0-9]{1,7}$/;
+
+const hasInvalidNonDiplomaticLetterPlacement = (plate) => {
+    const letterIndices = [...plate]
+        .map((char, index) => (/[A-Z]/.test(char) ? index : -1))
+        .filter((index) => index >= 0);
+    return (
+        letterIndices.length > 1 ||
+        (letterIndices.length === 1 && letterIndices[0] !== 0)
+    );
+};
+
 // --- Rate Mapping Engine ---
 const VEHICLE_RATES = {
     "Public Transport Vehicles | Upto 12 Seats": 30,
@@ -155,7 +167,13 @@ export default function WalkUpPOS() {
     const handlePlateChange = (e) => {
         let normalized = e.target.value.toUpperCase();
         if (licenceType !== "Diplomatic") {
-            normalized = normalized.replace(/[^0-9]/g, "");
+            normalized = normalized.replace(/[^A-Z0-9]/g, "");
+            if (normalized.length > 8) {
+                normalized = normalized.slice(0, 8);
+            }
+            if (hasInvalidNonDiplomaticLetterPlacement(normalized)) {
+                return;
+            }
         } else {
             normalized = normalized.replace(/[^A-Z0-9\s]/g, "");
         }
@@ -176,8 +194,12 @@ export default function WalkUpPOS() {
                 isValid = /^(0[1-9]|[1-9][0-9]|1[0-2][0-9]|13[0-2])(CD)?[0-9]{4}$/.test(plate);
                 setPlateError(isValid ? "" : "Invalid format");
             } else {
-                isValid = /^[0-9]{6,7}$/.test(plate);
-                setPlateError(isValid ? "" : "6 to 7 digits required");
+                isValid = NON_DIPLOMATIC_PLATE_REGEX.test(plate);
+                setPlateError(
+                    isValid
+                        ? ""
+                        : "1-8 chars max: numbers only, or one letter at start then numbers."
+                );
             }
         } else {
             setPlateError("");
@@ -372,9 +394,15 @@ export default function WalkUpPOS() {
 
                         {/* ROW 2: Plate Input */}
                         <div>
-                            <label className="block text-xs md:text-sm font-bold uppercase tracking-widest text-zinc-500 mb-1.5 ml-1 flex justify-between">
-                                <span className="flex items-center gap-2"><Search className="h-4 w-4" /> License Plate</span>
-                                {plateError && <span className="text-red-500 text-[10px] normal-case tracking-normal">{plateError}</span>}
+                            <label className="block text-xs md:text-sm font-bold uppercase tracking-widest text-zinc-500 mb-1.5 ml-1">
+                                <span className="flex items-center justify-between whitespace-nowrap gap-2">
+                                    <span className="flex items-center gap-2"><Search className="h-4 w-4" /> License Plate</span>
+                                    {plateError && (
+                                        <span className="text-red-500 text-[10px] normal-case tracking-normal shrink-0">
+                                            {plateError}
+                                        </span>
+                                    )}
+                                </span>
                             </label>
                             <div className={`relative group flex items-center w-full h-16 rounded-2xl transition-all duration-300 outline-none border-2 bg-zinc-50 dark:bg-black/40 text-zinc-900 dark:text-white overflow-hidden
                 ${plateError
@@ -458,27 +486,34 @@ export default function WalkUpPOS() {
                     </div>
 
                     {/* ROW 5: Total & Action */}
-                    <div className="mt-8 pt-6 border-t border-zinc-100 dark:border-white/5 flex flex-col sm:flex-row items-center gap-4">
+                    <div className="mt-8 pt-6 border-t border-zinc-100 dark:border-white/5 flex flex-col lg:flex-row flex-wrap items-stretch gap-4 w-full min-w-0">
 
-                        <div className="w-full sm:w-1/3 flex flex-col p-4 bg-emerald-50 dark:bg-emerald-500/10 rounded-2xl border border-emerald-200 dark:border-emerald-500/20 transition-all duration-300">
+                        <div className="w-full lg:w-[320px] min-w-0 flex flex-col justify-center p-4 rounded-2xl border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10 transition-all duration-300">
                             <span className="text-xs font-black uppercase tracking-widest text-emerald-700 dark:text-emerald-500 mb-1">Total Due</span>
-                            <div className="flex items-baseline gap-2">
-                                <span className="text-3xl font-black text-emerald-800 dark:text-emerald-400">{totalDeposit.toFixed(2)}</span>
-                                <span className="text-lg font-bold opacity-80 text-emerald-800 dark:text-emerald-400">ETB</span>
+                            <div className="flex items-baseline gap-2 min-w-0">
+                                <span className="text-2xl sm:text-3xl font-black text-emerald-800 dark:text-emerald-400 truncate">{totalDeposit.toFixed(2)}</span>
+                                <span className="text-base sm:text-lg font-bold opacity-80 text-emerald-800 dark:text-emerald-400 shrink-0">ETB</span>
                             </div>
-                            <p className="text-[10px] text-emerald-600 dark:text-emerald-500 font-bold mt-1">({currentRate} ETB/hr × {formatTimeDisplay(safeHours, safeMinutes)})</p>
+                            <p className="text-[10px] text-emerald-600 dark:text-emerald-500 font-bold mt-1 truncate">({currentRate} ETB/hr × {formatTimeDisplay(safeHours, safeMinutes)})</p>
                         </div>
 
-                        {/* ✅ Responsive Premium Green Action Button */}
                         <button
                             onClick={handleProcessCheckIn}
                             disabled={isProcessing || !!plateError || plate.length < 4 || (safeHours === 0 && safeMinutes === 0)}
-                            className="w-full sm:flex-1 h-[80px] sm:h-[90px] bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-300 dark:disabled:bg-zinc-800 disabled:text-zinc-500 text-emerald-950 font-black text-lg md:text-xl rounded-2xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all outline-none flex items-center justify-center gap-3 cursor-pointer"
+                            className="w-full flex-1 min-h-[72px] sm:min-h-[82px] lg:h-auto min-w-0 px-4 py-4 bg-emerald-500 hover:bg-emerald-400 disabled:bg-zinc-300 dark:disabled:bg-zinc-800 disabled:text-zinc-500 text-emerald-950 font-black rounded-2xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all outline-none flex items-center justify-center cursor-pointer whitespace-normal break-words"
                         >
                             {isProcessing ? (
-                                <span className="flex items-center gap-2 animate-pulse"><Receipt className="h-6 w-6" /> Generating Pass...</span>
+                                <span className="flex items-center justify-center gap-2 animate-pulse min-w-0">
+                                    <Receipt className="h-5 w-5 sm:h-6 sm:w-6 shrink-0" />
+                                    <span className="truncate">Generating Pass...</span>
+                                </span>
                             ) : (
-                                <>Collect Cash & Generate Pass <ArrowRight className="h-6 w-6" /></>
+                                <div className="flex items-center justify-center gap-2 flex-wrap text-center leading-tight w-full">
+                                    <span className="text-sm sm:text-base lg:text-xl break-words">
+                                        Collect Cash & Generate Pass
+                                    </span>
+                                    <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 shrink-0" />
+                                </div>
                             )}
                         </button>
                     </div>

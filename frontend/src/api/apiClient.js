@@ -1,4 +1,7 @@
-const BASE_URL = "http://localhost:4000/api";
+/** Backend REST API — override with VITE_API_BASE_URL in frontend/.env */
+const BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api"
+).replace(/\/$/, "");
 
 const getAccessToken = () => {
   try {

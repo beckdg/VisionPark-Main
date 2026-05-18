@@ -31,6 +31,28 @@ const VEHICLE_OPTIONS = [
   { group: "Machineries", items: ["Machineries | Upto 5000KG weight", "Machineries | 5001-10,000KG weight", "Machineries | Above 10,001KG weight"] }
 ];
 
+const hasInvalidNonDiplomaticLetterPlacement = (plate) => {
+  const letterIndices = [...plate]
+    .map((char, index) => (/[A-Z]/.test(char) ? index : -1))
+    .filter((index) => index >= 0);
+  return (
+    letterIndices.length > 1 ||
+    (letterIndices.length === 1 && letterIndices[0] !== 0)
+  );
+};
+
+const isValidNonDiplomaticPlate = (plate) => {
+  if (plate.length < 6 || plate.length > 8) return false;
+  if (!/^[A-Z0-9]+$/.test(plate)) return false;
+  if (hasInvalidNonDiplomaticLetterPlacement(plate)) return false;
+
+  if (/^[A-Z]/.test(plate)) {
+    return /^[A-Z][0-9]+$/.test(plate);
+  }
+
+  return /^[0-9]+$/.test(plate);
+};
+
 export default function DriverSignUp() {
   const navigate = useNavigate();
   const { setTheme } = useTheme();
@@ -121,7 +143,13 @@ export default function DriverSignUp() {
   const handlePlateChange = (e) => {
     let normalized = e.target.value.toUpperCase();
     if (formData.licenceType !== "Diplomatic") {
-      normalized = normalized.replace(/[^0-9]/g, "");
+      normalized = normalized.replace(/[^A-Z0-9]/g, "");
+      if (normalized.length > 8) {
+        normalized = normalized.slice(0, 8);
+      }
+      if (hasInvalidNonDiplomaticLetterPlacement(normalized)) {
+        return;
+      }
     } else {
       normalized = normalized.replace(/[^A-Z0-9\s]/g, "");
     }
@@ -176,11 +204,18 @@ export default function DriverSignUp() {
 
   // Plate validation
   useEffect(() => {
-    if (formData.licensePlate.length > 0) {
-      validatePlate(formData.licensePlate, formData.licenceType);
-    } else {
+    const plate = formData.licensePlate;
+
+    if (!plate || plate.length < 6) {
       setPlateError("");
+      return;
     }
+
+    const timer = setTimeout(() => {
+      validatePlate(plate, formData.licenceType);
+    }, 300);
+
+    return () => clearTimeout(timer);
   }, [formData.licensePlate, formData.licenceType]);
 
   // Password match
@@ -198,8 +233,12 @@ export default function DriverSignUp() {
       isValid = /^(0[1-9]|[1-9][0-9]|1[0-2][0-9]|13[0-2])(CD)?[0-9]{4}$/.test(plate);
       setPlateError(isValid ? "" : "Invalid Diplomatic format.");
     } else {
-      isValid = /^[0-9]{6,7}$/.test(plate);
-      setPlateError(isValid ? "" : "Must be 6 to 7 digits.");
+      isValid = isValidNonDiplomaticPlate(plate);
+      setPlateError(
+        isValid
+          ? ""
+          : "Plate must be 6-8 characters: numbers only, or one letter at the start followed by numbers."
+      );
     }
     return isValid;
   };
@@ -435,10 +474,16 @@ export default function DriverSignUp() {
                   )}
 
                   <div className="w-full min-w-0">
-                    <label className="block text-xs md:text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-1.5 ml-1 flex justify-between">
-                      License Plate {plateError && <span className="text-red-500 text-[10px] mt-0.5">{plateError}</span>}
+                    <label className="block text-xs md:text-sm font-medium text-zinc-600 dark:text-zinc-400 mb-1.5 ml-1">
+                      License Plate
                     </label>
-                    <div className={`relative group flex items-center w-full h-12 md:h-14 rounded-xl text-sm md:text-base transition-all duration-300 outline-none border bg-white/50 dark:bg-black/40 text-zinc-900 dark:text-white overflow-hidden
+
+                    {plateError && (
+                      <p className="text-red-500 text-[10px] mb-1 ml-1 whitespace-nowrap">
+                        {plateError}
+                      </p>
+                    )}
+                    <div className={`relative group flex items-center w-full h-12 md:h-14 rounded-xl text-sm md:text-base transition-all duration-300 outline-none border bg-white/50 dark:bg-black/40 text-zinc-900 dark:text-white overflow-hidden min-h-[56px]
                       ${plateError
                         ? "border-red-500/50 focus-within:border-red-500 focus-within:shadow-[0_0_15px_rgba(239,68,68,0.2)]"
                         : "border-zinc-200 dark:border-white/10 hover:border-zinc-300 dark:hover:border-white/20 focus-within:border-emerald-500 focus-within:shadow-[0_0_15px_rgba(16,185,129,0.2)] focus-within:bg-white/80 dark:focus-within:bg-black/60"
