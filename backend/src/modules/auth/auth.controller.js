@@ -22,8 +22,32 @@ const register = async (req, res, next) => {
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
-    const { token, user } = await authService.loginUser(email, password);
-    return res.status(200).json({ token, user });
+    const { token, user, requiresPasswordChange } = await authService.loginUser(
+      email,
+      password
+    );
+    return res.status(200).json({ token, user, requiresPasswordChange: Boolean(requiresPasswordChange) });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+const completeInitialPassword = async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    const result = await authService.completeInitialPassword(
+      req.user.userId,
+      currentPassword,
+      newPassword
+    );
+    return res.status(200).json({
+      success: true,
+      data: {
+        token: result.token,
+        user: result.user,
+        requiresPasswordChange: false,
+      },
+    });
   } catch (error) {
     return next(error);
   }
@@ -42,4 +66,5 @@ module.exports = {
   register,
   login,
   me,
+  completeInitialPassword,
 };

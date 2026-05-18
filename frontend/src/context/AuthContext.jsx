@@ -56,10 +56,14 @@ export function AuthProvider({ children }) {
     const data = await apiClient.post("/auth/login", { email, password });
     const nextToken = data?.token;
     const nextUser = data?.user;
+    const requiresPasswordChange = Boolean(
+      data?.requiresPasswordChange || nextUser?.mustChangePassword
+    );
     if (!nextToken || !nextUser) {
       throw new Error("Invalid login response from server.");
     }
-    return setSession(nextToken, nextUser);
+    const user = setSession(nextToken, nextUser);
+    return { user, requiresPasswordChange };
   }, [setSession]);
 
   const refreshMe = useCallback(async () => {

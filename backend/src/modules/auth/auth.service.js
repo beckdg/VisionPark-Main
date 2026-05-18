@@ -9,6 +9,7 @@ const {
   ForbiddenError,
 } = require("../../common/errors");
 const { hashPassword, comparePassword, toSafeUser } = require("./auth.utils");
+const { validatePasswordStrength } = require("./password.utils");
 const { EmailVerificationService } = require("../emailVerification/emailVerification.service");
 
 const emailVerificationService = new EmailVerificationService();
@@ -258,8 +259,51 @@ class AuthService {
     if (!ok) {
       throw new UnauthorizedError("Invalid email or password.");
     }
+    const safeUser = toSafeUser(user);
     const token = this.generateToken(user);
-    return { token, user: toSafeUser(user) };
+    return {
+      token,
+      user: safeUser,
+      requiresPasswordChange: user.mustChangePassword === true,
+    };
+  }
+
+  async completeInitialPassword(userId, currentPassword, newPassword) {
+    const strengthError = validatePasswordStrength(newPassword);
+    if (strengthError) {
+      throw new ValidationError(strengthError);
+    }
+    if (!currentPassword || !newPassword) {
+      throw new ValidationError("currentPassword and newPassword are required.");
+    }
+    if (currentPassword === newPassword) {
+      throw new ValidationError("New password must be different from your temporary password.");
+    }
+
+    const user = await User.findById(userId).select("+passwordHash");
+    if (!user || user.status !== "active") {
+      throw new UnauthorizedError("Invalid session.");
+    }
+    if (user.mustChangePassword !== true) {
+      throw new ValidationError("Password change is not required for this account.");
+    }
+
+    const ok = await comparePassword(currentPassword, user.passwordHash);
+    if (!ok) {
+      throw new UnauthorizedError("Current password is incorrect.");
+    }
+
+    user.passwordHash = await hashPassword(newPassword);
+    user.mustChangePassword = false;
+    user.passwordChangedAt = new Date();
+    await user.save();
+
+    const safeUser = toSafeUser(user);
+    return {
+      token: this.generateToken(user),
+      user: safeUser,
+      requiresPasswordChange: false,
+    };
   }
 
   generateToken(user) {

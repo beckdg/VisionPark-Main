@@ -39,5 +39,6 @@ router.post(
   emailVerificationController.resendPasswordResetOtp
 );
 router.get("/me", authenticate, controller.me);
+router.post("/complete-initial-password", authenticate, controller.completeInitialPassword);
 
 module.exports = router;

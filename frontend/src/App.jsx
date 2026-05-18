@@ -18,6 +18,7 @@ import VerifyEmail from "./shared/auth/VerifyEmail";
 import ForgotPassword from "./shared/auth/ForgotPassword";
 import VerifyResetOtp from "./shared/auth/VerifyResetOtp";
 import ResetPassword from "./shared/auth/ResetPassword";
+import SetupPassword from "./shared/auth/SetupPassword";
 import PrivacyPolicy from "./shared/pages/PrivacyPolicy";
 import GuestMap from "./guest/pages/GuestMap"; // <-- Added Guest Map
 
@@ -67,6 +68,13 @@ import SystemConfig from "./admin/pages/SystemConfig";
 import AdminProfile from "./admin/pages/AdminProfile";
 import ProtectedRoute from "./shared/auth/ProtectedRoute";
 
+function roleHomePath(role) {
+  if (role === "owner") return "/owner";
+  if (role === "attendant") return "/attendant";
+  if (role === "admin") return "/admin";
+  return "/driver";
+}
+
 function LoginRoute() {
   const { isAuthenticated, isBootstrapping, user } = useAuth();
   if (isBootstrapping) {
@@ -75,6 +83,10 @@ function LoginRoute() {
 
   if (!isAuthenticated) {
     return <Login />;
+  }
+
+  if (user?.mustChangePassword) {
+    return <Navigate to="/setup-password" replace />;
   }
 
   if (user?.role === "owner") {
@@ -99,16 +111,25 @@ function HomeRoute() {
     return <GuestMap />;
   }
 
-  if (user?.role === "owner") {
-    return <Navigate to="/owner" replace />;
+  if (user?.mustChangePassword) {
+    return <Navigate to="/setup-password" replace />;
   }
-  if (user?.role === "attendant") {
-    return <Navigate to="/attendant" replace />;
+
+  return <Navigate to={roleHomePath(user?.role)} replace />;
+}
+
+function SetupPasswordRoute() {
+  const { isAuthenticated, isBootstrapping, user } = useAuth();
+  if (isBootstrapping) {
+    return null;
   }
-  if (user?.role === "admin") {
-    return <Navigate to="/admin" replace />;
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
   }
-  return <Navigate to="/driver" replace />;
+  if (!user?.mustChangePassword) {
+    return <Navigate to={roleHomePath(user?.role)} replace />;
+  }
+  return <SetupPassword />;
 }
 
 export default function App() {
@@ -138,6 +159,7 @@ export default function App() {
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/verify-reset-otp" element={<VerifyResetOtp />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/setup-password" element={<SetupPasswordRoute />} />
               <Route path="/privacy-policy" element={<PrivacyPolicy />} />
               <Route
                 path="/payment/success"

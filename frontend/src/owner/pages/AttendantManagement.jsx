@@ -547,7 +547,7 @@ export default function AttendantManagement() {
       };
 
       await loadAttendants(branchFilter);
-      alert("Attendant registered successfully.");
+      alert("Attendant registered. Welcome email sent with temporary password.");
       closeModal();
     } catch (err) {
       alert(err?.message || "Failed to register attendant.");

@@ -14,6 +14,10 @@ export default function ProtectedRoute({ children, allowedRoles = [] }) {
     return <Navigate to={`/verify-email?email=${encoded}`} replace />;
   }
 
+  if (user?.mustChangePassword === true) {
+    return <Navigate to="/setup-password" replace />;
+  }
+
   if (allowedRoles.length > 0 && !allowedRoles.includes(user?.role)) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-zinc-100 dark:bg-[#09090b] px-4">

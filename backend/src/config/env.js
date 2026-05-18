@@ -111,6 +111,7 @@ const env = {
   brevoApiKey: process.env.BREVO_API_KEY?.trim() || null,
   brevoSenderEmail: process.env.BREVO_SENDER_EMAIL?.trim() || null,
   brevoSenderName: process.env.BREVO_SENDER_NAME?.trim() || "VisionPark",
+  frontendAppUrl: (process.env.FRONTEND_APP_URL || "http://localhost:5173").trim(),
 };
 
 module.exports = { env };

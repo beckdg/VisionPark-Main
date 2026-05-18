@@ -211,7 +211,7 @@ export default function OwnerAccount() {
                 },
             ]);
             setAccountExists(true);
-            showToast("Owner account successfully provisioned!");
+            showToast("Owner account provisioned. Welcome email sent with temporary password.");
             setSetupData({
                 name: "",
                 email: "",

@@ -4,6 +4,7 @@ const { EmailVerification } = require("./models/email-verification.model");
 const { generateOtpCode, hashOtp, compareOtp } = require("./otp.utils");
 const { sendOtpEmail } = require("./providers/brevo.provider");
 const { hashPassword } = require("../auth/auth.utils");
+const { validatePasswordStrength } = require("../auth/password.utils");
 const { env } = require("../../config/env");
 const {
   ValidationError,
@@ -202,23 +203,10 @@ class EmailVerificationService {
     }
   }
 
-  validatePasswordStrength(password) {
-    if (!password || typeof password !== "string") {
-      throw new ValidationError("password is required.");
-    }
-    if (password.length < 8) {
-      throw new ValidationError("password must be at least 8 characters.");
-    }
-    if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
-      throw new ValidationError(
-        "password must include both uppercase and lowercase letters."
-      );
-    }
-    if (!/\d/.test(password)) {
-      throw new ValidationError("password must include at least one number.");
-    }
-    if (!/[^A-Za-z0-9]/.test(password)) {
-      throw new ValidationError("password must include at least one symbol.");
+  assertPasswordStrength(password) {
+    const message = validatePasswordStrength(password);
+    if (message) {
+      throw new ValidationError(message);
     }
   }
 
@@ -325,7 +313,7 @@ class EmailVerificationService {
   }
 
   async resetPassword(resetToken, password) {
-    this.validatePasswordStrength(password);
+    this.assertPasswordStrength(password);
 
     const decoded = this.verifyPasswordResetToken(resetToken);
     const user = await User.findById(decoded.userId).select("+passwordHash");

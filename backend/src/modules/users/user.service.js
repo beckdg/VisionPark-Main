@@ -7,6 +7,9 @@ const {
 } = require("../../common/errors");
 const { hashPassword, toSafeUser } = require("../auth/auth.utils");
 const { ParkingLot } = require("../parking/models/parking-lot.model");
+const { ProvisioningService } = require("../provisioning/provisioning.service");
+
+const provisioningService = new ProvisioningService();
 
 const DRIVER_PAYMENT_METHODS = new Set([
   "Telebirr",
@@ -192,9 +195,11 @@ class UserService {
       throw new ValidationError("email must be a valid email address.");
     }
 
-    const passwordHash = await hashPassword(password);
+    const plainPassword = password;
+    const passwordHash = await hashPassword(plainPassword);
     const normalizedEmail = String(email).trim().toLowerCase();
     const { driver, owner, attendant } = sanitizeRoleProfiles(role, normalized);
+    const mustChangePassword = normalized.mustChangePassword === true;
 
     try {
       const user = await User.create({
@@ -208,10 +213,20 @@ class UserService {
         status: "active",
         emailVerified: role !== "driver",
         emailVerifiedAt: role !== "driver" ? new Date() : null,
+        mustChangePassword,
         driver,
         owner,
         attendant,
       });
+
+      if (mustChangePassword && (role === "owner" || role === "attendant")) {
+        await provisioningService.sendWelcomeCredentials({
+          user,
+          temporaryPassword: plainPassword,
+          role,
+        });
+      }
+
       return toSafeUser(user);
     } catch (error) {
       if (error && error.code === 11000) {
@@ -539,6 +554,7 @@ class UserService {
     return this.createUser({
       ...payload,
       role: "owner",
+      mustChangePassword: true,
     });
   }
 
@@ -570,6 +586,7 @@ class UserService {
     return this.createUser({
       ...normalized,
       role: "attendant",
+      mustChangePassword: true,
       attendant: {
         ...normalized.attendant,
         ownerId: String(ownerUserId),

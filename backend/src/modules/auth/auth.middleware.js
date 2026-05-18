@@ -27,7 +27,7 @@ const authenticate = async (req, res, next) => {
     }
 
     const account = await User.findById(userId).select(
-      "role emailVerified status passwordChangedAt"
+      "role emailVerified status passwordChangedAt mustChangePassword"
     );
     if (!account) {
       return next(new UnauthorizedError("Invalid or expired token."));
@@ -48,7 +48,20 @@ const authenticate = async (req, res, next) => {
       );
     }
 
-    req.user = { userId, role };
+    const path = req.originalUrl || req.url || "";
+    const isPasswordSetupRoute =
+      path.includes("/api/auth/complete-initial-password") ||
+      path.includes("/api/auth/me");
+
+    if (account.mustChangePassword === true && !isPasswordSetupRoute) {
+      return next(
+        new ForbiddenError(
+          "You must set a new password before accessing this resource."
+        )
+      );
+    }
+
+    req.user = { userId, role, mustChangePassword: account.mustChangePassword === true };
     if (req.context) {
       req.context.userId = userId;
     }

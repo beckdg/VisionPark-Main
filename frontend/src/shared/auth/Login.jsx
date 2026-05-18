@@ -29,7 +29,11 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const user = await auth.login(email, password);
+      const { user, requiresPasswordChange } = await auth.login(email, password);
+      if (requiresPasswordChange) {
+        navigate("/setup-password", { replace: true });
+        return;
+      }
       const role = user?.role;
       if (role === "owner") {
         navigate("/owner");
