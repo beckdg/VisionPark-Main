@@ -108,6 +108,9 @@ const env = {
   chapaReturnUrl: process.env.CHAPA_RETURN_URL?.trim() || null,
   chapaWebhookSecret: process.env.CHAPA_WEBHOOK_SECRET?.trim() || null,
   paymentPendingExpiryJobMs: Number(process.env.PAYMENT_PENDING_EXPIRY_JOB_MS || 60_000),
+  brevoApiKey: process.env.BREVO_API_KEY?.trim() || null,
+  brevoSenderEmail: process.env.BREVO_SENDER_EMAIL?.trim() || null,
+  brevoSenderName: process.env.BREVO_SENDER_NAME?.trim() || "VisionPark",
 };
 
 module.exports = { env };

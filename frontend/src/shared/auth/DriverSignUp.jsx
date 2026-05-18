@@ -247,16 +247,18 @@ export default function DriverSignUp() {
     }
 
     try {
-      await apiClient.post("/auth/register", payload);
-      const loggedInUser = await auth.login(formData.email.trim(), formData.password);
+      const result = await apiClient.post("/auth/register", payload);
       setIsSubmitting(false);
       setIsSuccess(true);
 
-      if (loggedInUser?.role === "driver") {
-        navigate("/driver");
+      if (result?.requiresVerification) {
+        const email = encodeURIComponent(formData.email.trim());
+        navigate(`/verify-email?email=${email}`, { replace: true });
         return;
       }
-      navigate("/driver");
+
+      await auth.login(formData.email.trim(), formData.password);
+      navigate("/driver", { replace: true });
     } catch (error) {
       setIsSubmitting(false);
       setIsSuccess(false);

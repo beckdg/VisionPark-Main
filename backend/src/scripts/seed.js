@@ -18,6 +18,8 @@ const upsertUser = async ({ email, name, role }) => {
     user.role = role;
     user.passwordHash = passwordHash;
     user.status = "active";
+    user.emailVerified = true;
+    user.emailVerifiedAt = user.emailVerifiedAt || new Date();
     await user.save();
   } else {
     user = await User.create({
@@ -26,6 +28,8 @@ const upsertUser = async ({ email, name, role }) => {
       role,
       passwordHash,
       status: "active",
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
     });
   }
   return user;

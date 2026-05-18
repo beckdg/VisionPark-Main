@@ -1,7 +1,7 @@
 const request = require("supertest");
 const mongoose = require("mongoose");
 const { createApp } = require("../../src/app");
-const { authHeader } = require("../utils/test-auth");
+const { authHeader, verifyDriverEmailForTests } = require("../utils/test-auth");
 
 const TEST_MONGO_URI =
   process.env.TEST_MONGO_URI || "mongodb://127.0.0.1:27017/visionpark_integration_test";
@@ -34,7 +34,9 @@ describe("Auth API", () => {
       password: "longpassword1",
     });
     expect(reg.status).toBe(201);
-    expect(reg.body.passwordHash).toBeUndefined();
+    expect(reg.body.requiresVerification).toBe(true);
+
+    await verifyDriverEmailForTests(app, email);
 
     const login = await request(app).post("/api/auth/login").send({
       email,

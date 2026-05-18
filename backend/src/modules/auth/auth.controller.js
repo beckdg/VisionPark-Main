@@ -4,8 +4,16 @@ const authService = new AuthService();
 
 const register = async (req, res, next) => {
   try {
-    const user = await authService.registerUser(req.body);
-    return res.status(201).json(user);
+    const result = await authService.registerUser(req.body);
+    if (result.requiresVerification) {
+      return res.status(201).json({
+        success: true,
+        requiresVerification: true,
+        email: result.email,
+        message: "A verification code has been sent to your email.",
+      });
+    }
+    return res.status(201).json(result.user);
   } catch (error) {
     return next(error);
   }

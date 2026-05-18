@@ -38,6 +38,12 @@ class ForbiddenError extends AppError {
   }
 }
 
+class TooManyRequestsError extends AppError {
+  constructor(message = "Too many requests", details = null) {
+    super(message, 429, "TOO_MANY_REQUESTS", details);
+  }
+}
+
 class InternalServerError extends AppError {
   constructor(message = "Internal server error", details = null) {
     super(message, 500, "INTERNAL_SERVER_ERROR", details);
@@ -51,5 +57,6 @@ module.exports = {
   NotFoundError,
   UnauthorizedError,
   ForbiddenError,
+  TooManyRequestsError,
   InternalServerError,
 };

@@ -8,6 +8,7 @@ const AuthContext = createContext({
   isAuthenticated: false,
   isBootstrapping: true,
   login: async () => {},
+  setSession: () => {},
   refreshMe: async () => {},
   logout: () => {},
 });
@@ -33,15 +34,10 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
-  const login = useCallback(async (email, password) => {
-    const data = await apiClient.post("/auth/login", { email, password });
-
-    const nextToken = data?.token;
-    const nextUser = data?.user;
+  const setSession = useCallback((nextToken, nextUser) => {
     if (!nextToken || !nextUser) {
-      throw new Error("Invalid login response from server.");
+      throw new Error("Invalid auth session.");
     }
-
     localStorage.setItem("accessToken", nextToken);
     localStorage.setItem("user", JSON.stringify(nextUser));
     if (nextUser.role === "driver") {
@@ -55,6 +51,16 @@ export function AuthProvider({ children }) {
     setUser(nextUser);
     return nextUser;
   }, []);
+
+  const login = useCallback(async (email, password) => {
+    const data = await apiClient.post("/auth/login", { email, password });
+    const nextToken = data?.token;
+    const nextUser = data?.user;
+    if (!nextToken || !nextUser) {
+      throw new Error("Invalid login response from server.");
+    }
+    return setSession(nextToken, nextUser);
+  }, [setSession]);
 
   const refreshMe = useCallback(async () => {
     const me = await apiClient.get("/auth/me");
@@ -98,10 +104,11 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(token && user),
       isBootstrapping,
       login,
+      setSession,
       refreshMe,
       logout,
     }),
-    [user, token, isBootstrapping, login, refreshMe, logout]
+    [user, token, isBootstrapping, login, setSession, refreshMe, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

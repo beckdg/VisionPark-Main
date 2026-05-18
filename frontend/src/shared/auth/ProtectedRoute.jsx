@@ -9,6 +9,11 @@ export default function ProtectedRoute({ children, allowedRoles = [] }) {
     return <Navigate to="/login" replace />;
   }
 
+  if (user?.role === "driver" && user?.emailVerified === false) {
+    const encoded = encodeURIComponent(user?.email || "");
+    return <Navigate to={`/verify-email?email=${encoded}`} replace />;
+  }
+
   if (allowedRoles.length > 0 && !allowedRoles.includes(user?.role)) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-zinc-100 dark:bg-[#09090b] px-4">

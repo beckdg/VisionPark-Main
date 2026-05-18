@@ -41,7 +41,14 @@ export default function Login() {
         navigate("/driver");
       }
     } catch (err) {
-      setError(err?.message || "Login failed.");
+      const message = err?.message || "Login failed.";
+      setError(message);
+      if (/verify your email/i.test(message)) {
+        const encoded = encodeURIComponent(email.trim());
+        setTimeout(() => {
+          navigate(`/verify-email?email=${encoded}`, { replace: true });
+        }, 1200);
+      }
     } finally {
       setIsLoading(false);
     }

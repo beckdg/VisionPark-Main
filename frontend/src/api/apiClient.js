@@ -49,7 +49,9 @@ const parseResponsePayload = async (response) => {
 
   if (payload && typeof payload.success === "boolean") {
     if (payload.success) {
-      return { ok: true, payload, data: payload.data };
+      const data =
+        payload.data !== undefined && payload.data !== null ? payload.data : payload;
+      return { ok: true, payload, data };
     }
     throw normalizeBackendError(payload, "Request failed");
   }

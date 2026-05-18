@@ -14,6 +14,7 @@ import AdminLayout from "./admin/components/AdminLayout";
 // --- 2. AUTH & PUBLIC ---
 import Login from "./shared/auth/Login";
 import DriverSignUp from "./shared/auth/DriverSignUp";
+import VerifyEmail from "./shared/auth/VerifyEmail";
 import ForgotPassword from "./shared/auth/ForgotPassword";
 import PrivacyPolicy from "./shared/pages/PrivacyPolicy";
 import GuestMap from "./guest/pages/GuestMap"; // <-- Added Guest Map
@@ -131,6 +132,7 @@ export default function App() {
               <Route path="/" element={<HomeRoute />} />
               <Route path="/login" element={<LoginRoute />} />
               <Route path="/signup" element={<DriverSignUp />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/privacy-policy" element={<PrivacyPolicy />} />
               <Route

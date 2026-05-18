@@ -9,6 +9,9 @@ const {
   ForbiddenError,
 } = require("../../common/errors");
 const { hashPassword, comparePassword, toSafeUser } = require("./auth.utils");
+const { EmailVerificationService } = require("../emailVerification/emailVerification.service");
+
+const emailVerificationService = new EmailVerificationService();
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -203,6 +206,7 @@ class AuthService {
     }
 
     const passwordHash = await hashPassword(password);
+    const requiresDriverVerification = role === "driver";
     try {
       const user = await User.create({
         name,
@@ -211,11 +215,22 @@ class AuthService {
         avatarUrl,
         passwordHash,
         status: "active",
+        emailVerified: requiresDriverVerification ? false : true,
+        emailVerifiedAt: requiresDriverVerification ? null : new Date(),
         driver,
         owner,
         attendant,
       });
-      return toSafeUser(user);
+
+      if (requiresDriverVerification) {
+        await emailVerificationService.createAndSendSignupOtp(user);
+        return {
+          requiresVerification: true,
+          email: user.email,
+        };
+      }
+
+      return { user: toSafeUser(user) };
     } catch (error) {
       if (error && error.code === 11000) {
         throw new ConflictError("A user with this email already exists.");
@@ -235,6 +250,9 @@ class AuthService {
     }
     if (user.status !== "active") {
       throw new UnauthorizedError("Account is not active.");
+    }
+    if (user.role === "driver" && user.emailVerified === false) {
+      throw new UnauthorizedError("Please verify your email before logging in.");
     }
     const ok = await comparePassword(password, user.passwordHash);
     if (!ok) {

@@ -206,6 +206,8 @@ class UserService {
           : null,
         passwordHash,
         status: "active",
+        emailVerified: role !== "driver",
+        emailVerifiedAt: role !== "driver" ? new Date() : null,
         driver,
         owner,
         attendant,

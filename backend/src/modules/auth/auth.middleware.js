@@ -10,8 +10,9 @@ const {
 const { ParkingSession } = require("../sessions/models/parking-session.model");
 const { ParkingLot } = require("../parking/models/parking-lot.model");
 const { Transaction } = require("../operations/models/transaction.model");
+const { User } = require("../users/models/user.model");
 
-const authenticate = (req, res, next) => {
+const authenticate = async (req, res, next) => {
   try {
     const header = req.headers.authorization || "";
     const [scheme, token] = header.split(/\s+/);
@@ -24,6 +25,20 @@ const authenticate = (req, res, next) => {
     if (!userId || !role) {
       return next(new UnauthorizedError("Invalid token payload."));
     }
+
+    const account = await User.findById(userId).select("role emailVerified status");
+    if (!account) {
+      return next(new UnauthorizedError("Invalid or expired token."));
+    }
+    if (account.status !== "active") {
+      return next(new UnauthorizedError("Account is not active."));
+    }
+    if (account.role === "driver" && account.emailVerified === false) {
+      return next(
+        new ForbiddenError("Please verify your email before accessing this resource.")
+      );
+    }
+
     req.user = { userId, role };
     if (req.context) {
       req.context.userId = userId;
