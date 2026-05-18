@@ -5,9 +5,11 @@ import {
     Wallet, Clock, Banknote,
     CheckCircle, AlertTriangle, Calculator,
     LogOut, FileText, Lock,
-    ReceiptText, Printer, XCircle, Download
+    ReceiptText, Download, X
 } from "lucide-react";
 import { apiClient } from "../../api/apiClient";
+import { useAuth } from "../../context/AuthContext";
+import { generateZReportPdf } from "../utils/generateZReportPdf";
 
 const formatShiftTime = (value) => {
     if (!value) return "--";
@@ -33,6 +35,7 @@ const mapWalkUpToLog = (walkUp) => ({
 
 export default function Shift() {
     const navigate = useNavigate();
+    const auth = useAuth();
 
     const [shiftState, setShiftState] = useState("loading");
     const [reportData, setReportData] = useState(null);
@@ -44,6 +47,7 @@ export default function Shift() {
     const [isDownloading, setIsDownloading] = useState(false);
     const [toast, setToast] = useState({ message: "", type: "success" });
     const [loadError, setLoadError] = useState(null);
+    const [pdfError, setPdfError] = useState("");
 
     const cancelledRef = useRef(false);
 
@@ -146,7 +150,17 @@ export default function Shift() {
         }
     };
 
-    const handleSignOut = () => navigate("/");
+    const handleSignOut = () => {
+        auth.logout();
+        navigate("/login", { replace: true });
+    };
+
+    const handleDismissCompleted = () => {
+        setZReport(null);
+        setReportData(null);
+        setActualCashInput("");
+        setShiftState("pre-shift");
+    };
 
     const handleCancelZReport = () => {
         if (shiftState === "completed") return;
@@ -155,9 +169,20 @@ export default function Shift() {
         loadCurrentShift();
     };
 
-    const executeDownloadPDF = () => {
+    const executeDownloadPDF = async () => {
+        if (!zReport) return;
+        setPdfError("");
         setIsDownloading(true);
-        setTimeout(() => setIsDownloading(false), 1500);
+        try {
+            await generateZReportPdf(zReport);
+            showToast("Z-Report PDF saved.");
+        } catch (error) {
+            const message = error?.message || "Could not generate PDF. Try again.";
+            setPdfError(message);
+            showToast(message, "error");
+        } finally {
+            setIsDownloading(false);
+        }
     };
 
     const shiftStartedAt = reportData?.shift?.startedAt;
@@ -220,6 +245,14 @@ export default function Shift() {
             <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
                 <div className="max-w-md w-full bg-white dark:bg-[#18181b] rounded-2xl shadow-2xl flex flex-col border border-transparent dark:border-white/10 overflow-hidden max-h-[95dvh] overflow-y-auto custom-scrollbar">
                     <div className="bg-emerald-500 p-8 pt-10 flex flex-col items-center justify-center text-zinc-950 relative shrink-0">
+                        <button
+                            type="button"
+                            onClick={handleDismissCompleted}
+                            aria-label="Close report"
+                            className="absolute top-4 right-4 h-9 w-9 rounded-full bg-zinc-950/15 hover:bg-zinc-950/25 text-zinc-950 flex items-center justify-center transition-colors outline-none cursor-pointer"
+                        >
+                            <X className="h-5 w-5" />
+                        </button>
                         <h2 className="text-3xl font-black font-mono tracking-tight mb-1">VisionPark</h2>
                         <p className="font-bold text-xs opacity-80 uppercase tracking-widest mb-4">{zReport.branchName}</p>
                         <h1 className="text-xl font-black bg-white/20 px-4 py-2 rounded-lg tracking-widest uppercase shadow-sm">End of Shift Z-Report</h1>
@@ -264,20 +297,25 @@ export default function Shift() {
                     <div className="w-full h-3 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMCI+PHBvbHlnb24gcG9pbnRzPSIwLDEwIDYsMCAxMiwxMCAxMiwxMCAwLDEwIiBmaWxsPSIjZjlmYWZiIi8+PC9zdmc+')] dark:bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMiIgaGVpZ2h0PSIxMCI+PHBvbHlnb24gcG9pbnRzPSIwLDEwIDYsMCAxMiwxMCAxMiwxMCAwLDEwIiBmaWxsPSIjMTIxMjE0Ii8+PC9zdmc+')] shrink-0" />
 
                     <div className="bg-zinc-100 dark:bg-[#18181b] p-4 flex flex-col gap-3 shrink-0">
+                        {pdfError ? (
+                            <p className="text-xs font-bold text-red-600 dark:text-red-400 text-center">{pdfError}</p>
+                        ) : null}
                         <div className="flex gap-2">
                             <button
+                                type="button"
+                                onClick={executeDownloadPDF}
+                                disabled={isDownloading}
+                                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white font-bold py-3.5 rounded-xl active:scale-95 transition-all outline-none flex items-center justify-center gap-1.5 cursor-pointer shadow-sm text-sm disabled:opacity-70"
+                            >
+                                <Download className={`h-4 w-4 ${isDownloading ? "animate-bounce" : ""}`} />
+                                {isDownloading ? "Saving..." : "Save PDF"}
+                            </button>
+                            <button
+                                type="button"
                                 onClick={handleSignOut}
-                                className="flex-1 bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 font-bold py-3.5 rounded-xl active:scale-95 transition-all outline-none flex items-center justify-center gap-1.5 cursor-pointer shadow-sm text-sm"
+                                className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-3.5 rounded-xl active:scale-95 transition-all outline-none flex items-center justify-center gap-1.5 cursor-pointer shadow-sm text-sm"
                             >
                                 <LogOut className="h-4 w-4" /> Sign Out
-                            </button>
-                            <button className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-xl active:scale-95 transition-all outline-none flex items-center justify-center gap-1.5 cursor-pointer shadow-sm text-sm">
-                                <Printer className="h-4 w-4" /> Print
-                            </button>
-                            <button onClick={executeDownloadPDF} disabled={isDownloading}
-                                className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-400 dark:disabled:bg-blue-800 text-white font-bold py-3.5 rounded-xl active:scale-95 transition-all outline-none flex items-center justify-center gap-1.5 cursor-pointer shadow-sm text-sm">
-                                <Download className={`h-4 w-4 ${isDownloading ? 'animate-bounce' : ''}`} />
-                                {isDownloading ? 'Saving...' : 'Save PDF'}
                             </button>
                         </div>
                     </div>
