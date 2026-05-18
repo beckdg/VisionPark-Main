@@ -283,6 +283,7 @@ class OwnerAttendantsService {
       stats,
       shifts: shiftReports.map((row) => ({
         id: String(row._id),
+        reportDocumentId: String(row._id),
         shiftId: String(row.shiftId),
         startedAt: row.shiftStartedAt,
         endedAt: row.shiftClosedAt,
@@ -367,6 +368,10 @@ class OwnerAttendantsService {
           : "SHORTAGE";
 
     return {
+      source: {
+        collection: "shiftreports",
+        documentId: String(report._id),
+      },
       reportId: String(report._id),
       shiftId: String(report.shiftId),
       attendant: {

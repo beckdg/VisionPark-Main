@@ -3,9 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Mail, Phone, MapPin, Clock, ShieldCheck,
   TrendingUp, Receipt, Users, Activity, AlertTriangle,
-  FileText, X, Banknote, Wallet, CheckCircle, Loader2
+  FileText, CheckCircle, Loader2, Wallet
 } from "lucide-react";
 import { apiClient } from "../../api/apiClient";
+import ShiftZReportReceiptModal from "../../shared/components/ShiftZReportReceiptModal";
 
 const formatEtb = (value) => {
   const n = Number(value);
@@ -65,127 +66,6 @@ const KpiCard = ({ icon: Icon, label, value, sub }) => (
   </div>
 );
 
-const ShiftZReportModal = ({ report, loading, error, onClose }) => {
-  if (!report && !loading) return null;
-
-  const reconciliation = report?.reconciliation ?? {};
-  const isExact = Number(reconciliation?.variance ?? 0) === 0;
-  const isShort = Number(reconciliation?.variance ?? 0) < 0;
-
-  return (
-    <div className="fixed inset-0 z-[8000] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-zinc-900/60 dark:bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-2xl bg-white dark:bg-[#18181b] rounded-2xl shadow-2xl border border-zinc-200 dark:border-white/10 max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-white/5 shrink-0">
-          <div>
-            <h3 className="text-lg font-black text-zinc-900 dark:text-white">Shift Z-Report</h3>
-            <p className="text-xs text-zinc-500">{report?.branch?.name ?? "Branch"}</p>
-          </div>
-          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-white/5 outline-none">
-            <X className="h-5 w-5 text-zinc-500" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5 md:p-6 space-y-6 custom-scrollbar">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-3">
-              <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
-              <p className="text-sm font-bold text-zinc-500">Loading report...</p>
-            </div>
-          ) : error ? (
-            <div className="text-center py-12">
-              <AlertTriangle className="h-10 w-10 text-red-500 mx-auto mb-3" />
-              <p className="text-sm font-bold text-red-600 dark:text-red-400">{error}</p>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-zinc-500 font-bold uppercase text-[10px]">Opened</span><p className="font-mono font-bold">{formatDateTime(report?.shift?.startedAt)}</p></div>
-                <div><span className="text-zinc-500 font-bold uppercase text-[10px]">Closed</span><p className="font-mono font-bold">{formatDateTime(report?.shift?.closedAt)}</p></div>
-                <div><span className="text-zinc-500 font-bold uppercase text-[10px]">Duration</span><p className="font-bold">{report?.shift?.duration ?? "—"}</p></div>
-                <div><span className="text-zinc-500 font-bold uppercase text-[10px]">Generated</span><p className="font-bold">{formatDateTime(report?.generatedAt)}</p></div>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[
-                  ["Revenue", `${formatEtb(report?.totals?.totalRevenue)} ETB`],
-                  ["Walk-Ups", report?.totals?.totalWalkUps ?? 0],
-                  ["Transactions", report?.totals?.totalTransactions ?? 0],
-                  ["Cash Diff", `${formatEtb(report?.totals?.cashDifference)} ETB`],
-                ].map(([label, val]) => (
-                  <div key={label} className="p-3 rounded-xl bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
-                    <p className="text-[10px] font-bold uppercase text-zinc-500">{label}</p>
-                    <p className="text-lg font-black text-zinc-900 dark:text-white mt-1">{val}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="p-4 rounded-xl border border-zinc-200 dark:border-white/10 space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Cash Reconciliation</h4>
-                <div className="flex justify-between text-sm"><span className="text-zinc-500">Expected</span><span className="font-bold">{formatEtb(reconciliation?.expected)} ETB</span></div>
-                <div className="flex justify-between text-sm"><span className="text-zinc-500">Submitted</span><span className="font-bold text-emerald-600">{formatEtb(reconciliation?.submitted)} ETB</span></div>
-                <div className={`flex justify-between text-sm font-black p-3 rounded-lg ${isExact ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400" : isShort ? "bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400" : "bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"}`}>
-                  <span>Variance</span>
-                  <span>{Number(reconciliation?.variance) > 0 ? "+" : ""}{formatEtb(reconciliation?.variance)} ETB · {reconciliation?.status}</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
-                  <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-1"><Banknote className="h-3 w-3" /> Cash Payments</p>
-                  <p className="text-lg font-black mt-1">{formatEtb(report?.totals?.cashPaymentsTotal)} ETB</p>
-                </div>
-                <div className="p-3 rounded-xl bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
-                  <p className="text-[10px] font-bold uppercase text-zinc-500 flex items-center gap-1"><Wallet className="h-3 w-3" /> Digital Payments</p>
-                  <p className="text-lg font-black mt-1">{formatEtb(report?.totals?.digitalPaymentsTotal)} ETB</p>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">Walk-Ups ({report?.walkUps?.length ?? 0})</h4>
-                {(report?.walkUps ?? []).length === 0 ? (
-                  <p className="text-sm text-zinc-400">No walk-ups in this shift.</p>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
-                    {report.walkUps.map((w) => (
-                      <div key={w.id} className="flex justify-between items-center p-3 rounded-xl bg-zinc-50 dark:bg-black/20 border border-zinc-100 dark:border-white/5 text-sm">
-                        <div>
-                          <span className="font-mono font-bold">{w.plateNumber}</span>
-                          <p className="text-[10px] text-zinc-500 uppercase mt-0.5">{w.paymentMethod} · {formatDateTime(w.createdAt)}</p>
-                        </div>
-                        <span className="font-black text-emerald-600">+{formatEtb(w.amount)} ETB</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-3">Transactions ({report?.transactions?.length ?? 0})</h4>
-                {(report?.transactions ?? []).length === 0 ? (
-                  <p className="text-sm text-zinc-400">No digital transactions in this shift.</p>
-                ) : (
-                  <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
-                    {report.transactions.map((t) => (
-                      <div key={t.id} className="flex justify-between items-center p-3 rounded-xl bg-zinc-50 dark:bg-black/20 border border-zinc-100 dark:border-white/5 text-sm">
-                        <div>
-                          <span className="font-bold">{t.method}</span>
-                          <p className="text-[10px] text-zinc-500 uppercase mt-0.5">{t.status} · {formatDateTime(t.completedAt)}</p>
-                        </div>
-                        <span className="font-black">{formatEtb(t.amount)} ETB</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 export default function AttendantDetails() {
   const { attendantId } = useParams();
   const navigate = useNavigate();
@@ -193,7 +73,7 @@ export default function AttendantDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
-  const [zReportId, setZReportId] = useState(null);
+  const [zReportOpen, setZReportOpen] = useState(false);
   const [zReport, setZReport] = useState(null);
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportError, setZReportError] = useState(null);
@@ -216,13 +96,13 @@ export default function AttendantDetails() {
     loadDetails();
   }, [loadDetails]);
 
-  const openZReport = async (reportId) => {
-    setZReportId(reportId);
+  const openZReport = async (reportDocumentId) => {
+    setZReportOpen(true);
     setZReport(null);
     setZReportError(null);
     setZReportLoading(true);
     try {
-      const result = await apiClient.get(`/owner/shift-reports/${reportId}`);
+      const result = await apiClient.get(`/owner/shift-reports/${reportDocumentId}`);
       setZReport(result);
     } catch (err) {
       setZReportError(err?.message || "Failed to load Z-report.");
@@ -232,7 +112,7 @@ export default function AttendantDetails() {
   };
 
   const closeZReport = () => {
-    setZReportId(null);
+    setZReportOpen(false);
     setZReport(null);
     setZReportError(null);
   };
@@ -373,7 +253,7 @@ export default function AttendantDetails() {
                       <td className="px-4 py-4 text-right">
                         <button
                           type="button"
-                          onClick={() => openZReport(shift.id)}
+                          onClick={() => openZReport(shift.reportDocumentId || shift.id)}
                           className="text-xs font-bold text-blue-600 hover:text-blue-500 dark:text-blue-400 outline-none"
                         >
                           View Z Report
@@ -424,9 +304,9 @@ export default function AttendantDetails() {
         </div>
       </div>
 
-      {zReportId ? (
-        <ShiftZReportModal
-          report={zReport}
+      {zReportOpen ? (
+        <ShiftZReportReceiptModal
+          apiReport={zReport}
           loading={zReportLoading}
           error={zReportError}
           onClose={closeZReport}
