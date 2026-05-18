@@ -32,6 +32,7 @@ import PaymentSuccess from "./driver/pages/PaymentSuccess";
 import Dashboard from "./owner/pages/Dashboard";
 import ParkingManagement from "./owner/pages/ParkingManagement";
 import AttendantManagement from "./owner/pages/AttendantManagement";
+import AttendantDetails from "./owner/pages/AttendantDetails";
 import Operations from "./owner/pages/Operations";
 import Analytics from "./owner/pages/Analytics";
 import FinancialReports from "./owner/pages/FinancialReports";
@@ -176,6 +177,7 @@ export default function App() {
                 <Route path="dashboard" element={<Dashboard />} />
                 <Route path="parking" element={<ParkingManagement />} />
                 <Route path="attendants" element={<AttendantManagement />} />
+                <Route path="attendants/:attendantId" element={<AttendantDetails />} />
                 <Route path="operations" element={<Operations />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="finance" element={<FinancialReports />} />

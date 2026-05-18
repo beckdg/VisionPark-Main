@@ -21,6 +21,7 @@ const { attendantWalkupRoutes } = require("../modules/attendantWalkup");
 const { attendantIncidentRoutes } = require("../modules/attendantIncidents");
 const { attendantShiftReportsRoutes } = require("../modules/attendantShiftReports");
 const { ownerOperationsRoutes } = require("../modules/ownerOperations");
+const { ownerAttendantsRoutes } = require("../modules/ownerAttendants");
 const { uploadRoutes } = require("../modules/uploads");
 const { pricingRoutes } = require("../modules/pricing");
 const { paymentRoutes } = require("../modules/payments");
@@ -162,6 +163,7 @@ const createApp = () => {
   app.use("/api/attendant", attendantIncidentRoutes);
   app.use("/api/attendant/shifts", attendantShiftReportsRoutes);
   app.use("/api/owner", ownerOperationsRoutes);
+  app.use("/api/owner", ownerAttendantsRoutes);
   app.use("/api/uploads", uploadRoutes);
   app.use("/api/pricing", pricingRoutes);
   app.use("/api/payments", paymentRoutes);

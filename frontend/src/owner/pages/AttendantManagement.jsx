@@ -4,11 +4,13 @@
  * UX: Validates inputs on blur to avoid annoying the user while they are actively typing.
  */
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { 
   Users, Plus, Trash2, Edit2, Mail, Lock, 
   Phone, MapPin, X, Key, ShieldCheck, AlertCircle, 
-  RefreshCw, Eye, EyeOff, UploadCloud, Check, ChevronDown, Clock, Sun, Moon, Sunrise
+  RefreshCw, Eye, EyeOff, UploadCloud, Check, ChevronDown, Clock, Sun, Moon, Sunrise,
+  Filter, ChevronRight, Loader2
 } from "lucide-react";
 import { apiClient } from "../../api/apiClient";
 import { useAuth } from "../../context/AuthContext";
@@ -127,9 +129,27 @@ const getShiftLabel = (start, end) => {
   return null; 
 };
 
+const AttendantAvatar = ({ name, src }) => {
+  if (src) {
+    return (
+      <img src={src} alt={name} className="h-8 w-8 md:h-10 md:w-10 rounded-full border border-zinc-200 dark:border-white/10 object-cover" />
+    );
+  }
+  const initials = String(name || "?").split(" ").map((p) => p[0]).join("").slice(0, 2).toUpperCase();
+  return (
+    <div className="h-8 w-8 md:h-10 md:w-10 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-xs font-black text-emerald-700 dark:text-emerald-400">
+      {initials}
+    </div>
+  );
+};
+
 export default function AttendantManagement() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [attendants, setAttendants] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [branchFilter, setBranchFilter] = useState("all");
+  const [listLoading, setListLoading] = useState(true);
   const [ownerLots, setOwnerLots] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -150,62 +170,63 @@ export default function AttendantManagement() {
   const [avatarFile, setAvatarFile] = useState(null);
   const fileInputRef = useRef(null);
 
+  const loadAttendants = useCallback(async (branchId = branchFilter) => {
+    setListLoading(true);
+    try {
+      const query =
+        branchId && branchId !== "all"
+          ? `?branchId=${encodeURIComponent(branchId)}`
+          : "";
+      const [lots, branchList, attendantsResponse] = await Promise.all([
+        apiClient.get("/parking/lots"),
+        apiClient.get("/owner/attendants/branches"),
+        apiClient.get(`/owner/attendants${query}`),
+      ]);
+
+      const resolvedLots = Array.isArray(lots) ? lots : [];
+      const list = Array.isArray(attendantsResponse) ? attendantsResponse : [];
+
+      setOwnerLots(resolvedLots);
+      setBranches(Array.isArray(branchList) ? branchList : []);
+      setAttendants(
+        list.map((row) => ({
+          id: row.id,
+          name: row.fullName,
+          email: row.email || "-",
+          phone: row.phone || "-",
+          faydaId: row.employeeId || "-",
+          branch: row.branch?.name || "Unassigned",
+          lotId: row.branch?.id || "",
+          shiftStart: row.shiftStart || "--:--",
+          shiftEnd: row.shiftEnd || "--:--",
+          status:
+            row.status === "suspended"
+              ? "Suspended"
+              : row.currentShiftStatus === "on_shift"
+                ? "On Shift"
+                : "Active",
+          avatar: row.profileImage || null,
+          totalRevenueGenerated: row.totalRevenueGenerated ?? 0,
+          totalShiftsWorked: row.totalShiftsWorked ?? 0,
+          address: row.address || "-",
+        }))
+      );
+    } catch {
+      setOwnerLots([]);
+      setBranches([]);
+      setAttendants([]);
+    } finally {
+      setListLoading(false);
+    }
+  }, [branchFilter]);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [lots, attendantsResponse] = await Promise.all([
-          apiClient.get("/parking/lots"),
-          apiClient.get("/users/attendants/mine"),
-        ]);
+    loadAttendants(branchFilter);
+  }, [branchFilter, loadAttendants]);
 
-        const resolvedLots = Array.isArray(lots) ? lots : [];
-        const ownerId = String(user?._id || user?.id || user?.userId || "");
-        const attendantsList = Array.isArray(attendantsResponse) ? attendantsResponse : [];
-
-        const mappedAttendants = attendantsList
-          .filter((attendantUser) => {
-            const attendantOwnerId = String(attendantUser?.attendant?.ownerId || "");
-            return !ownerId || attendantOwnerId === ownerId;
-          })
-          .map((attendantUser) => {
-            const attendant = attendantUser?.attendant || {};
-            const lot = resolvedLots.find((l) => String(l?._id) === String(attendant?.lotId));
-            return {
-              id: String(attendantUser?._id ?? attendantUser?.id),
-              name: attendantUser?.name || "Unnamed Attendant",
-              email: attendantUser?.email || "-",
-              phone: attendant?.phone || "-",
-              faydaId: attendant?.faydaId || "-",
-              address: attendant?.address || "-",
-              branch: lot?.name || "Unassigned",
-              shiftStart: attendant?.shiftStart || "--:--",
-              shiftEnd: attendant?.shiftEnd || "--:--",
-              lotId: attendant?.lotId ? String(attendant?.lotId) : "",
-              status: attendantUser?.status === "inactive" ? "Inactive" : "Active",
-              avatar:
-                attendantUser?.avatarUrl ||
-                `https://i.pravatar.cc/150?u=${encodeURIComponent(
-                  String(attendantUser?._id ?? attendantUser?.id ?? attendantUser?.email ?? attendantUser?.name ?? "attendant")
-                )}`,
-            };
-          });
-
-        if (!cancelled) {
-          setOwnerLots(resolvedLots);
-          setAttendants(mappedAttendants);
-        }
-      } catch {
-        if (!cancelled) {
-          setOwnerLots([]);
-          setAttendants([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?._id, user?.id, user?.userId]);
+  const handleBranchFilterChange = (value) => {
+    setBranchFilter(value);
+  };
 
   useEffect(() => {
     if (!isModalOpen || ownerLots.length === 0) return;
@@ -415,7 +436,7 @@ export default function AttendantManagement() {
         shiftEnd: payload.attendant.shiftEnd,
       };
 
-      setAttendants((prev) => prev.map((a) => (a.id === editingAttendant.id ? updatedLocal : a)));
+      await loadAttendants(branchFilter);
       alert("Attendant updated successfully.");
       closeEditModal();
     } catch (err) {
@@ -432,7 +453,7 @@ export default function AttendantManagement() {
 
     try {
       await apiClient.delete(`/users/attendants/${att.id}`);
-      setAttendants((prev) => prev.filter((a) => a.id !== att.id));
+      await loadAttendants(branchFilter);
       alert("Attendant deleted successfully.");
       if (editingAttendant?.id === att.id) closeEditModal();
     } catch (err) {
@@ -508,10 +529,7 @@ export default function AttendantManagement() {
       }
       const lot = ownerLots.find((l) => String(l._id) === String(created?.attendant?.lotId ?? formData.lotId));
       const displayBranch = lot?.name || formData.branch;
-      const avatar =
-        uploadedAvatarUrl ||
-        avatarPreview ||
-        `https://i.pravatar.cc/150?u=${encodeURIComponent(formData.name.replace(/\s/g, "") || "user")}`;
+      const avatar = uploadedAvatarUrl || avatarPreview || null;
 
       const newAttendant = {
         id: String(created?._id ?? created?.id ?? `att_${Date.now()}`),
@@ -528,7 +546,7 @@ export default function AttendantManagement() {
         avatar,
       };
 
-      setAttendants((prev) => [...prev, newAttendant]);
+      await loadAttendants(branchFilter);
       alert("Attendant registered successfully.");
       closeModal();
     } catch (err) {
@@ -580,11 +598,37 @@ export default function AttendantManagement() {
       </div>
 
       <div className="bg-white dark:bg-[#121214] rounded-2xl border border-zinc-200 dark:border-white/5 shadow-sm overflow-hidden flex flex-col">
-        <div className="p-4 md:p-5 border-b border-zinc-100 dark:border-white/5 bg-zinc-50 dark:bg-white/5 flex items-center gap-2">
-          <Users className="h-4 w-4 text-zinc-500" />
-          <h2 className="text-xs md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Registered Attendants</h2>
+        <div className="p-4 md:p-5 border-b border-zinc-100 dark:border-white/5 bg-zinc-50 dark:bg-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-zinc-500" />
+            <h2 className="text-xs md:text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Registered Attendants</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-zinc-400 shrink-0" />
+            <select
+              value={branchFilter}
+              onChange={(e) => handleBranchFilterChange(e.target.value)}
+              className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-white/10 text-sm font-bold rounded-xl px-3 py-2 outline-none focus:border-emerald-500 min-w-[160px]"
+            >
+              <option value="all">All Branches</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
-        
+
+        {listLoading ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
+            <p className="text-sm font-bold text-zinc-500">Loading attendants...</p>
+          </div>
+        ) : attendants.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-2 px-4 text-center">
+            <Users className="h-10 w-10 text-zinc-300" />
+            <p className="text-sm font-bold text-zinc-500">No attendants found for this filter.</p>
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[1100px]">
             <thead>
@@ -594,6 +638,7 @@ export default function AttendantManagement() {
                 <th className="px-4 md:px-6 py-4 font-semibold">Fayda ID (FAN)</th>
                 <th className="px-4 md:px-6 py-4 font-semibold">Assigned Branch</th>
                 <th className="px-4 md:px-6 py-4 font-semibold">Shift Time</th>
+                <th className="px-4 md:px-6 py-4 font-semibold">Performance</th>
                 <th className="px-4 md:px-6 py-4 font-semibold">Status</th>
                 <th className="px-4 md:px-6 py-4 font-semibold text-right">Actions</th>
               </tr>
@@ -603,11 +648,16 @@ export default function AttendantManagement() {
                 const shiftLabel = getShiftLabel(att.shiftStart, att.shiftEnd);
 
                 return (
-                  <tr key={att.id} className="border-b border-zinc-100 dark:border-white/5 last:border-0 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors">
+                  <tr
+                    key={att.id}
+                    onClick={() => navigate(`/owner/attendants/${att.id}`)}
+                    className="border-b border-zinc-100 dark:border-white/5 last:border-0 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors cursor-pointer group"
+                  >
                     <td className="px-4 md:px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <img src={att.avatar} alt={att.name} className="h-8 w-8 md:h-10 md:w-10 rounded-full border border-zinc-200 dark:border-white/10 object-cover" />
-                        <span className="font-bold text-zinc-900 dark:text-white">{att.name}</span>
+                        <AttendantAvatar name={att.name} src={att.avatar} />
+                        <span className="font-bold text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{att.name}</span>
+                        <ChevronRight className="h-4 w-4 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                       </div>
                     </td>
                     <td className="px-4 md:px-6 py-4">
@@ -639,11 +689,17 @@ export default function AttendantManagement() {
                     </td>
 
                     <td className="px-4 md:px-6 py-4">
-                      <span className="inline-flex items-center px-2 py-1 md:px-2.5 md:py-1 rounded-md bg-emerald-100 dark:bg-emerald-500/20 text-[10px] md:text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                      <div className="flex flex-col gap-0.5 text-xs">
+                        <span className="font-bold text-zinc-900 dark:text-white">{Number(att.totalRevenueGenerated || 0).toFixed(2)} ETB</span>
+                        <span className="text-zinc-500">{att.totalShiftsWorked ?? 0} shifts</span>
+                      </div>
+                    </td>
+                    <td className="px-4 md:px-6 py-4">
+                      <span className={`inline-flex items-center px-2 py-1 md:px-2.5 md:py-1 rounded-md text-[10px] md:text-xs font-bold ${att.status === "On Shift" ? "bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400" : att.status === "Suspended" ? "bg-red-100 dark:bg-red-500/20 text-red-600" : "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400"}`}>
                         <ShieldCheck className="h-3 w-3 mr-1" /> {att.status}
                       </span>
                     </td>
-                    <td className="px-4 md:px-6 py-4 text-right">
+                    <td className="px-4 md:px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
                         <button title="Reset Password" type="button" className="p-2 text-zinc-400 hover:text-blue-500 bg-zinc-100 dark:bg-white/5 rounded-lg transition-colors outline-none"><Key className="h-4 w-4" /></button>
                         <button
@@ -670,6 +726,7 @@ export default function AttendantManagement() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {isModalOpen && (
