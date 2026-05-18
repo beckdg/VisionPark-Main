@@ -36,15 +36,15 @@ if (!allowedEnvs.includes(nodeEnv)) {
 }
 
 const defaultMongoUriByEnv = {
-  development: "mongodb://127.0.0.1:27017/visionpark",
-  test: "mongodb://127.0.0.1:27017/visionpark_test",
-  staging: null,
-  production: null,
+  test: process.env.TEST_MONGO_URI || "mongodb://127.0.0.1:27017/visionpark_test",
 };
 
-const rawMongoUri = process.env.MONGO_URI || defaultMongoUriByEnv[nodeEnv];
+const rawMongoUri =
+  process.env.MONGO_URI || (nodeEnv === "test" ? defaultMongoUriByEnv.test : null);
 if (!rawMongoUri) {
-  throw new ValidationError("MONGO_URI is required for staging/production environments.");
+  throw new ValidationError(
+    "MONGO_URI is required. Set your MongoDB Atlas connection string in backend/.env"
+  );
 }
 
 const defaultJwtSecretByEnv = {
@@ -77,11 +77,10 @@ if (!parsedPort) {
   throw new ValidationError("PORT must be a valid integer between 1 and 65535.");
 }
 
-const rawCorsAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS || "*";
-const corsAllowedOrigins = rawCorsAllowedOrigins
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const corsOrigin =
+  process.env.CORS_ORIGIN ||
+  process.env.CORS_ALLOWED_ORIGINS?.split(",")[0]?.trim() ||
+  "http://localhost:5173";
 
 const env = {
   nodeEnv,
@@ -97,7 +96,7 @@ const env = {
   jwtSecret: requireString(rawJwtSecret, "JWT_SECRET"),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "1d",
   aiApiKey: requireString(rawAiApiKey, "AI_API_KEY"),
-  corsAllowedOrigins,
+  corsOrigin,
   cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME?.trim() || null,
   cloudinaryApiKey: process.env.CLOUDINARY_API_KEY?.trim() || null,
   cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET?.trim() || null,

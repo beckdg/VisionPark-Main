@@ -88,7 +88,7 @@ const SidebarContent = ({ collapsed, currentPath, onNavigate, onHover, onLeave, 
 
       <button onClick={onLogout} className={`flex items-center justify-center gap-2 ${collapsed ? 'p-3' : 'p-3 w-full'} text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-colors font-bold outline-none cursor-pointer`}>
         <LogOut className="h-4 w-4 shrink-0" />
-        {!collapsed && <span>End Shift</span>}
+        {!collapsed && <span>Sign Out</span>}
       </button>
     </div>
   </div>
